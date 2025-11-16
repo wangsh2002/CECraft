@@ -106,6 +106,9 @@ module.exports = {
     chunkFilename: isDev ? "[name].chunk.js" : "[name].[contenthash].js",
     assetModuleFilename: isDev ? "[name].[ext]" : "[name].[contenthash].[ext]",
   },
+  devServer: {
+    historyApiFallback: true,
+  },
 };
 
 // https://www.rspack.dev/
