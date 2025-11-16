@@ -1,0 +1,96 @@
+@import '../../../styles/variable';
+
+:global(.arco-color-picker-size-mini) {
+  padding: 4px;
+}
+
+.title {
+  @include flex-align-center;
+
+  border-bottom: 1px solid var(--color-border-2);
+  font-size: 15px;
+  font-weight: bold;
+  margin-top: 10px;
+  padding: 5px 0;
+
+  &:first-child {
+    margin-top: 5px;
+  }
+
+  .launch {
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: normal;
+    margin-left: 1px;
+    margin-top: 3px;
+    padding: 2px;
+  }
+}
+
+.item {
+  @include flex-justify-between;
+
+  margin-top: 10px;
+}
+
+.input:global(.arco-input-group-wrapper) {
+  width: 70px;
+}
+
+.richText {
+  /* stylelint-disable-next-line max-line-length */
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'noto sans', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  margin-top: 6px;
+  // COMPAT: 兼容`Canvas`绘制
+  word-break: break-all;
+}
+
+:global {
+  .doc-line {
+    line-height: 1.5 !important;
+    margin: 0 !important;
+  }
+
+  .hover-menu-container {
+    .arco-menu-inner {
+      .arco-menu-pop.arco-menu-pop-header {
+        display: none;
+      }
+    }
+  }
+}
+
+.radioGroup {
+  :global(.arco-radio) {
+    font-size: 13px;
+    line-height: unset;
+  }
+}
+
+.modal {
+  position: relative;
+  width: 700px;
+
+  .modalTitle {
+    margin-top: 3px;
+    text-align: left;
+  }
+
+  :global(.arco-modal-content) {
+    padding: 5px 15px 15px;
+  }
+
+  .resize {
+    bottom: 0;
+    cursor: col-resize;
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 7px;
+  }
+}
+
+.uploadImage {
+  color: rgb(var(--arcoblue-6));
+  cursor: pointer;
+}

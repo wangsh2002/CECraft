@@ -1,0 +1,13 @@
+{
+    "terminal.integrated.profiles.osx": {
+        "zsh": {
+            "path": "/bin/zsh",
+            "args": []
+        }
+    },
+    "terminal.integrated.defaultProfile.osx": "zsh",
+    "python.terminal.activateEnvironment": true,
+    "terminal.integrated.env.osx": {
+        "CONDA_DEFAULT_ENV": "CECraft"
+    }
+}
