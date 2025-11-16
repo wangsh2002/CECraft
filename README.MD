@@ -1,4 +1,4 @@
-# CanvasEditor1
+# CanvasEditor
 
 <p>
 <a href="https://github.com/WindrunnerMax/CanvasEditor">GitHub</a>
