@@ -14,6 +14,36 @@ import { Rect } from "./components/rect";
 import { Text } from "./components/text";
 import styles from "./index.m.scss";
 
+// [新增] 辅助函数：从复杂的编辑器数据结构中提取纯文本
+const extractPureText = (data: any): string => {
+  if (!data) return "";
+  
+  let parsed = data;
+  // 1. 如果是 JSON 字符串，先解析
+  if (typeof data === "string") {
+    try {
+      parsed = JSON.parse(data);
+    } catch (e) {
+      return data; // 解析失败，可能本身就是纯文本
+    }
+  }
+
+  // 2. 针对特定的编辑器结构 {"chars": [ { "chars": [...] } ]} 进行提取
+  if (parsed && Array.isArray(parsed.chars)) {
+    return parsed.chars
+      .map((line: any) => {
+        if (line.chars && Array.isArray(line.chars)) {
+          return line.chars.map((item: any) => item.char || "").join("");
+        }
+        return "";
+      })
+      .join("\n");
+  }
+
+  // 3. 兜底：如果是其他对象结构，尝试 stringify，或者直接返回空
+  return typeof parsed === "object" ? JSON.stringify(parsed) : String(parsed);
+};
+
 export const RightPanel: FC = () => {
   const { editor } = useEditor();
   const [collapse, setCollapse] = useState(false);
@@ -60,15 +90,14 @@ export const RightPanel: FC = () => {
     setAiResponse("");
     aiAbortRef.current = new AbortController();
 
-    // 1. 获取上下文
-    const rawTextData = activeState.getAttr(TEXT_ATTRS.DATA) || "";
-    let contextContent = "";
-    try {
-      const parsed = typeof rawTextData === 'string' ? JSON.parse(rawTextData) : rawTextData;
-      contextContent = JSON.stringify(parsed);
-    } catch (e) {
-      contextContent = String(rawTextData);
-    }
+    // 1. 获取原始数据
+    const rawTextData = activeState.getAttr(TEXT_ATTRS.DATA);
+    
+    // 2. [关键修改] 提取纯文本！
+    // 只有把干净的文本给 LLM，它才不会“发疯”去回复代码
+    const cleanContext = extractPureText(rawTextData);
+
+    console.log("发送给 AI 的上下文:", cleanContext); // 调试用，确保这里是人能看懂的字
 
     try {
       const response = await fetch("http://localhost:8000/api/ai/chat", {
@@ -76,7 +105,7 @@ export const RightPanel: FC = () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ prompt: value, context: contextContent }),
+        body: JSON.stringify({ prompt: value, context: cleanContext }),
         signal: aiAbortRef.current.signal,
       });
 
