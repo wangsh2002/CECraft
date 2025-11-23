@@ -4,20 +4,21 @@ import type { FC } from "react";
 import { useEffect, useState, useRef } from "react";
 import type { SelectionChangeEvent } from "sketching-core";
 import { EDITOR_EVENT } from "sketching-core";
-import { cs, TSON } from "sketching-utils"; // [修改] 添加 TSON
+import { cs, TSON } from "sketching-utils"; // 确保引入 TSON
 import { TEXT_ATTRS } from "sketching-plugin";
+import type { RichTextLines } from "sketching-plugin"; // [新增] 引入类型
 import { Op, OP_TYPE } from "sketching-delta";
-import { Delta as BlockDelta } from "@block-kit/delta"; // [新增] 引入 BlockDelta
+import { Delta as BlockDelta } from "@block-kit/delta";
 
 import { useEditor } from "../../hooks/use-editor";
 import { NAV_ENUM } from "../header/utils/constant";
 import { Image } from "./components/image";
 import { Rect } from "./components/rect";
 import { Text } from "./components/text";
-import { AIPreviewModal } from "./components/ai-preview"; // 引入预览组件
+import { AIPreviewModal } from "./components/ai-preview";
+// [新增] 引入 sketchToTextDelta (用于发送前转换) 和 textDeltaToSketch (用于接收后转换)
+import { sketchToTextDelta, textDeltaToSketch } from "./components/text/utils/transform"; 
 import styles from "./index.m.scss";
-import { textDeltaToSketch } from "./components/text/utils/transform"; 
-
 
 export const RightPanel: FC = () => {
   const { editor } = useEditor();
@@ -26,10 +27,10 @@ export const RightPanel: FC = () => {
   
   // AI 状态
   const [aiResponse, setAiResponse] = useState("");
-  const [isLoading, setIsLoading] = useState(false); // 替换 isStreaming，改为整体加载状态
+  const [isLoading, setIsLoading] = useState(false);
   
   // 修改预览状态
-  const [previewData, setPreviewData] = useState<any>(null); // 存储后端返回的 delta json
+  const [previewData, setPreviewData] = useState<any>(null);
   const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
@@ -68,12 +69,29 @@ export const RightPanel: FC = () => {
     setAiResponse("");
     setPreviewData(null);
 
-    // 1. 获取带有 Delta 格式的原始 JSON 数据 (不再是纯文本)
-    // 这样 Agent 才能理解结构并返回正确的格式
-    const rawDeltaData = activeState.getAttr(TEXT_ATTRS.DATA);
-    
-    // 如果是字符串对象，保证传给后端的是字符串
-    const contextStr = typeof rawDeltaData === 'object' ? JSON.stringify(rawDeltaData) : rawDeltaData;
+    // ============ [核心修复] ============
+    // 1. 获取原始 Sketch 数据 (JSON 字符串)
+    const rawSketchData = activeState.getAttr(TEXT_ATTRS.DATA);
+    let contextStr = "";
+
+    try {
+        if (rawSketchData) {
+            // 2. 解析为 RichTextLines 对象
+            const lines = TSON.parse<RichTextLines>(rawSketchData);
+            if (lines) {
+                // 3. 转换为标准 Delta 格式 (这一步会自动合并相邻的相同属性字符，如 'A','n','t' -> 'Ant')
+                const delta = sketchToTextDelta(lines);
+                // 4. 序列化 Delta 发送给后端
+                contextStr = JSON.stringify(delta);
+            } else {
+                contextStr = typeof rawSketchData === 'object' ? JSON.stringify(rawSketchData) : rawSketchData;
+            }
+        }
+    } catch (e) {
+        console.error("Context conversion failed:", e);
+        contextStr = typeof rawSketchData === 'object' ? JSON.stringify(rawSketchData) : rawSketchData;
+    }
+    // ====================================
 
     try {
       const response = await fetch("http://localhost:8000/api/ai/agent", {
@@ -83,7 +101,7 @@ export const RightPanel: FC = () => {
         },
         body: JSON.stringify({ 
             prompt: value, 
-            context: contextStr || "{}" // 兜底
+            context: contextStr 
         }),
       });
 
@@ -93,10 +111,8 @@ export const RightPanel: FC = () => {
 
       const result = await response.json();
       
-      // 2. 处理 Agent 返回结果
       setAiResponse(result.reply);
 
-      // 3. 意图识别处理
       if (result.intention === "modify" && result.modified_data) {
           setPreviewData(result.modified_data);
           Message.info("AI 已生成修改建议，请点击预览查看");
@@ -111,26 +127,20 @@ export const RightPanel: FC = () => {
     }
   };
 
-// 应用修改到画布
+  // 应用修改到画布
   const handleApplyModification = () => {
+    // 这里其实会被 AIPreviewModal 的 onApply 接管，
+    // 但保留此函数作为备用或非预览模式下的逻辑
     if (activeState && previewData) {
       try {
-        // 1. 确保 previewData 是对象
         let sourceData = previewData;
         if (typeof previewData === "string") {
           sourceData = JSON.parse(previewData);
         }
 
-        // 2. [关键修复] 将 AI 返回的 Quill Delta 转换为 Sketch 内部格式
-        // 检查是否包含 ops，这是 Quill Delta 的特征
         if (sourceData && Array.isArray(sourceData.ops)) {
-          // 构建 BlockDelta 对象
           const blockDelta = new BlockDelta(sourceData.ops);
-          
-          // 调用转换函数：BlockDelta -> RichTextLines (Sketch格式)
           const sketchData = textDeltaToSketch(blockDelta);
-          
-          // 3. 序列化为 storage 格式 (使用 TSON)
           const payload = TSON.stringify(sketchData);
 
           editor.state.apply(new Op(OP_TYPE.REVISE, { 
@@ -141,13 +151,9 @@ export const RightPanel: FC = () => {
           Message.success("修改已应用");
           setShowPreview(false);
           setPreviewData(null);
-        } else {
-           console.error("Invalid Delta format:", sourceData);
-           Message.error("应用失败：数据格式不正确");
         }
       } catch (e) {
         console.error("Apply Error:", e);
-        Message.error("应用修改失败，请查看控制台");
       }
     }
   };
@@ -178,7 +184,6 @@ export const RightPanel: FC = () => {
             <IconRobot style={{ color: '#165DFF' }} /> 简历智能助手
           </div>
 
-          {/* 输入框区域 */}
           {isTextSelected ? (
             <Input.Search
               placeholder="例如：把这段经历改得更专业..."
@@ -193,7 +198,6 @@ export const RightPanel: FC = () => {
             </div>
           )}
 
-          {/* 回复展示区域 */}
           {aiResponse && (
             <div style={{ 
                 background: 'var(--color-fill-2)', 
@@ -209,7 +213,6 @@ export const RightPanel: FC = () => {
                 <div style={{ whiteSpace: 'pre-wrap' }}>{aiResponse}</div>
                 
                 <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                    {/* 如果有修改数据，显示预览按钮 */}
                     {previewData && (
                         <Button 
                             type="primary" 
@@ -233,7 +236,7 @@ export const RightPanel: FC = () => {
           )}
         </div>
 
-        {/* 属性编辑器区域 (保留) */}
+        {/* 属性编辑器区域 */}
         {active.length === 0 && <div style={{ padding: 12, color: 'var(--color-text-3)' }}>请选择画布上的元素进行编辑</div>}
         {active.length === 1 && loadEditor()}
 
@@ -242,7 +245,12 @@ export const RightPanel: FC = () => {
             <AIPreviewModal 
                 visible={showPreview}
                 onCancel={() => setShowPreview(false)}
-                onApply={handleApplyModification}
+                // 注意：这里我们让 AIPreviewModal 内部处理应用逻辑（因为涉及到 Diff 清洗），
+                // 这里的 onApply 只是用来关闭弹窗的回调
+                onApply={() => {
+                    setShowPreview(false);
+                    setPreviewData(null);
+                }}
                 originalState={activeState}
                 editor={editor}
                 modifiedData={previewData}

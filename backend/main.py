@@ -1,5 +1,6 @@
 import os
 import uvicorn
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -24,35 +25,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Pydantic Models (保持接口一致) ---
+# --- Pydantic Models ---
 class ChatRequest(BaseModel):
     prompt: str
-    context: str  # 接收 JSON 字符串上下文
+    context: str
 
 class AgentResponse(BaseModel):
-    intention: str  # "modify" | "chat"
+    intention: str
     reply: str
     modified_data: Optional[Dict[str, Any]] = None
 
 # --- LangChain Setup ---
 
-# 1. 初始化模型 (Qwen)
+# 1. 初始化模型
 llm = ChatTongyi(
     model="qwen-flash",
     dashscope_api_key=DASHSCOPE_API_KEY,
-    temperature=0.1,  # 降低随机性，保证 JSON 格式稳定
+    temperature=0.1,  # 低温度有助于严格遵守格式指令
 )
 
-# 2. 定义系统提示词模板
-# 注意：JSON 样例中的大括号需要用双大括号 {{ }} 转义
+# 2. 定义系统提示词模板 (包含新的约束条件)
 system_prompt_text = """
 你是一个专业的简历优化助手和数据处理 Agent。
 
 ### 任务目标
-1. 分析用户的指令
-2. 参考提供的上下文内容（可能是 Sketch 内部格式）
+1. 分析用户的指令。
+2. 参考提供的上下文内容（可能是 Sketch 内部格式）。
 3. 判断用户意图是 "修改内容" (modify) 还是 "普通闲聊/提问" (chat)。
 4. 如果是 "modify"，请根据用户指令修改内容，并**必须将其转换为标准的 Quill Delta 格式**输出。
+
+### ⚠️ 内容保持与格式约束 (重要)
+1. **结构保持**：请尽量**保持原有的段落数量、换行结构和列表项数量**。除非用户明确要求大幅重组或扩充，否则请只在原有框架下进行润色，不要随意合并或拆分段落。
+2. **空格保留**：文本中的空格（尤其是连续的空格）通常用于对齐或特殊排版，请**务必原样保留**，不要将其压缩、合并或删除。
+   - 例如："技能     Java" 中的多个空格应保留。
+3. **英文规范**：虽然要保留对齐空格，但**严禁**在英文单词内部插入错误的空格（例如不要将 "Project" 变成 "P r o j e c t"）。
 
 ### Delta 格式严格要求
 修改后的数据 (modified_data) 必须是一个包含 "ops" 数组的对象。
@@ -70,7 +76,7 @@ system_prompt_text = """
 ### 输出示例
 {{
     "intention": "modify",
-    "reply": "已为您优化工作经历部分的描述，使其更加专业。",
+    "reply": "已为您优化工作经历部分的描述，使其更加专业，并保持了原有的排版格式。",
     "modified_data": {{
         "ops": [
             {{ "insert": "工作经历", "attributes": {{ "bold": true, "fontSize": 18 }} }},
@@ -91,16 +97,21 @@ prompt_template = ChatPromptTemplate.from_messages([
     ("user", "用户的指令：{user_prompt}\n上下文内容：{context_json}")
 ])
 
-# 4. 初始化输出解析器 (自动清洗 Markdown 代码块并转为 Dict)
+# 4. 初始化输出解析器
 parser = JsonOutputParser()
 
-# 5. 构建 Chain (LCEL 语法)
+# 5. 构建 Chain
 chain = prompt_template | llm | parser
 
 @app.post("/api/ai/agent")
 async def ai_agent_process(request: ChatRequest):
     try:
-        print(f"Received Prompt: {request.prompt}")
+        # 调试：输出前端发送的完整请求内容（以 JSON 格式美观打印）
+        try:
+            body_json = json.dumps(request.dict(), ensure_ascii=False, indent=2)
+        except Exception:
+            body_json = str(request)
+        print("Received request body:", body_json)
         
         # 调用 Chain
         result = chain.invoke({
@@ -110,16 +121,23 @@ async def ai_agent_process(request: ChatRequest):
         
         print("AI Response:", result)
         
-        # 构造响应
-        return AgentResponse(
+        # 构造响应并调试输出（打印发送给前端的内容）
+        response_obj = AgentResponse(
             intention=result.get("intention", "chat"),
             reply=result.get("reply", "处理完成"),
             modified_data=result.get("modified_data")
         )
 
+        try:
+            resp_json = json.dumps(response_obj.dict(), ensure_ascii=False, indent=2)
+        except Exception:
+            resp_json = str(response_obj)
+        print("Sending response body:", resp_json)
+
+        return response_obj
+
     except Exception as e:
         print(f"Error: {str(e)}")
-        # 发生错误时返回 500
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
