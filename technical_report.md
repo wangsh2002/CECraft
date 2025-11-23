@@ -1,123 +1,166 @@
-CECraft AI 智能助手集成技术报告
+AI 简历优化助手 - 技术实现文档
+1. 功能概述
+AI 简历优化助手允许用户选中简历中的文本模块，输入优化指令（如“把这段经历改得更专业”），由后端 AI Agent 生成修改后的富文本数据。前端提供预览功能，确认无误后将修改应用到画布上。
 
-1. 概述
+2. 后端接口规范
+该功能基于 FastAPI 实现，集成了通义千问（DashScope）大模型。
 
-本报告详细阐述了在 CECraft 简历编辑器中集成 AI 智能助手（Agent）的技术实现。系统利用通义千问（qwen-flash）大模型，实现了基于意图识别的富文本简历内容自动优化与即时预览功能。
+接口定义
 
-2. 架构设计
+接口地址: /api/ai/agent
 
-2.1 整体流程
+请求方法: POST
 
-用户交互：用户在前端 Canvas 选中富文本节点 -> 输入自然语言指令。
+Content-Type: application/json
 
-数据组装：前端提取当前节点的 Delta JSON 数据 + 用户指令，发送至后端。
+请求参数 (Request Body)
 
-后端 Agent 处理：
+字段名	类型	必填	说明
+prompt	string	是	用户的指令，例如："优化这段工作经历的描述"。
+context	string	是	当前选中文本块的上下文数据。通常是序列化后的 JSON 字符串，包含原有的文本内容和格式。
+请求示例:
 
-Intent Classifier (意图识别)：判断是 "modify" (修改) 还是 "chat" (闲聊)。
-
-Content Generation (内容生成)：如果是修改，生成符合 Quill/Delta 规范的 JSON 数据。
-
-前端反馈：
-
-显示 AI 文本回复。
-
-如果包含修改数据，显示 "预览修改" 按钮。
-
-预览与应用：用户点击预览 -> 弹出带渲染的模态框 -> 点击应用 -> 更新 Canvas 状态。
-
-2.2 接口规范 (API Specification)
-
-Endpoint: POST /api/ai/agent
-
-Request:
-
+JSON
 {
-  "prompt": "把这段经历写得更专业一点",
-  "context": "{\"chars\": [...]}" // 原始 Delta JSON 字符串
+  "prompt": "请帮我润色这段自我介绍，使其更自信。",
+  "context": "{\"chars\":[{\"char\":\"我\",\"config\":{\"WEIGHT\":\"bold\"}}...]}"
 }
+响应参数 (Response Body)
 
+后端会返回一个 JSON 对象，包含意图识别结果和标准化的 Delta 数据。
 
-Response:
+字段名	类型	说明
+intention	string	AI 识别的意图。"modify" 表示需要修改内容，"chat" 表示普通对话。
+reply	string	AI 给用户的文本回复/解释。
+modified_data	object	null
+响应示例 (Modify 意图):
 
+JSON
 {
-  "intention": "modify", // 或 "chat"
-  "reply": "已为您优化了关于实习经历的描述，增强了动词力度。",
-  "modified_data": { ... } // 新的 Delta JSON 对象，若 intention 为 chat 则为 null
+  "intention": "modify",
+  "reply": "已为您优化自我介绍，突出了您的领导能力。",
+  "modified_data": {
+    "ops": [
+      { "insert": "拥有 5 年前端架构经验", "attributes": { "bold": true, "fontSize": 14 } },
+      { "insert": "\n", "attributes": { "list": "bullet" } }
+    ]
+  }
 }
+数据格式规范 (重要)
 
+为了兼容前端编辑器（BlockKit），后端通过 Prompt Engineering 强制 AI 输出 Quill Delta 格式，并执行以下属性映射：
 
-3. 详细实现细节
+数据结构: 必须包含 ops 数组。
 
-3.1 后端 Agent 实现 (backend/main.py)
+属性映射:
 
-模型选择：使用 qwen-flash，该模型在长文本处理和 JSON 格式指令遵循上具有极高的性价比和速度。
+WEIGHT: "bold" -> attributes: { "bold": true }
 
-Prompt Engineering：
+SIZE: 14 -> attributes: { "fontSize": 14 }
 
-使用了 System Prompt 来强约束输出格式。
+UNORDERED_LIST_LEVEL -> attributes: { "list": "bullet" } (注意：列表属性仅附加在 \n 上)
 
-明确要求输出必须是严格的 JSON，包含 intention, reply, modified_data 三个字段。
+3. 前端集成与使用指南
+前端位于右侧面板 (RightPanel)，负责采集上下文、调用接口以及最关键的数据格式转换。
 
-向 AI 解释了 Delta 格式（ops, insert, attributes），确保生成的 JSON 能被前端编辑器直接解析。
+3.1 调用流程图
 
-鲁棒性处理：增加了 JSON 解析容错机制，如果 AI 返回了 Markdown 代码块（```json），会自动清洗后解析。
+采集: 用户选中 Text 节点 -> 获取内部格式数据 (RichTextLines)。
 
-3.2 前端交互实现 (frontend/.../right-panel)
+发送: 将数据序列化为字符串 -> 发送 POST /api/ai/agent。
 
-A. 状态管理
+预览: 接收 Quill Delta (modified_data) -> 在 Modal 中渲染预览。
 
-在 RightPanel 组件中引入了新的状态：
+转换 (关键): 用户点击“应用” -> Quill Delta 转回 RichTextLines。
 
-previewData: 用于存储后端返回的待修改数据。
+应用: 将转换后的数据写入 editor.state。
 
-isLoading: 控制 UI 的加载与禁用状态。
+3.2 关键代码实现
 
-showPreview: 控制预览模态框的显示。
+步骤 1: 发送请求 (RightPanel)
 
-B. 数据流转
+在 handleAISubmit 中，获取当前选中文本的状态数据并发送。
 
-发送前：使用 activeState.getAttr(TEXT_ATTRS.DATA) 获取原始结构化数据，而非纯文本。这保留了原有的样式信息，让 AI 能在原有格式基础上修改。
+TypeScript
+// CECraft/frontend/packages/react/src/components/right-panel/index.tsx
 
-接收后：判断 intention === 'modify'。如果是，则不直接覆盖，而是存入临时状态，等待用户确认。
+const handleAISubmit = async (value: string) => {
+  // 1. 获取原始 Sketch 数据
+  const rawDeltaData = activeState.getAttr(TEXT_ATTRS.DATA);
+  const contextStr = typeof rawDeltaData === 'object' ? JSON.stringify(rawDeltaData) : rawDeltaData;
 
-C. 预览组件 (AIPreviewModal)
+  // 2. 调用 API
+  const response = await fetch("/api/ai/agent", {
+    method: "POST",
+    body: JSON.stringify({ prompt: value, context: contextStr }),
+    // ... headers
+  });
+  
+  const result = await response.json();
+  if (result.intention === "modify") {
+    setPreviewData(result.modified_data); // 保存 Quill Delta 格式用于预览
+    setShowPreview(true);
+  }
+};
+步骤 2: 预览数据 (AIPreviewModal)
 
-复用性：该组件复用了项目原有的 RichTextEditor 模块。
+在预览组件中，需要识别后端返回的 ops 格式并直接渲染，跳过针对 Sketch 格式的转换逻辑。
 
-数据转换：由于 RichTextEditor 通常依赖 useMemo 计算数据源，我们通过 useRef + sketchToTextDelta 工具函数，将 AI 返回的 JSON 转换为编辑器可渲染的 BlockDelta 格式。
+TypeScript
+// CECraft/frontend/packages/react/src/components/right-panel/components/ai-preview/index.tsx
+import { Delta as BlockDelta } from "@block-kit/delta";
 
-隔离性：预览组件在 Modal 中运行，点击 "取消" 不会对 Canvas 产生任何副作用；只有点击 "应用" 才会触发 editor.state.apply。
+useMemo(() => {
+  if (modifiedData && Array.isArray(modifiedData.ops)) {
+    // 识别到标准 Quill Delta 格式，直接实例化
+    dataRef.current = new BlockDelta(modifiedData.ops);
+  } else {
+    // 兼容旧逻辑
+    dataRef.current = sketchToTextDelta(modifiedData);
+  }
+}, [modifiedData]);
+步骤 3: 应用修改与格式回转 (handleApplyModification)
 
-4. 环境配置与部署
+这是防止崩溃的核心步骤。编辑器内核（Sketching Core）不认识 Quill Delta 格式，必须在应用前转换回内部格式。
 
-4.1 新建 Conda 环境
+引入依赖:
 
-conda create -n cecraft_ai python=3.9
-conda activate cecraft_ai
-pip install -r backend/requirements.txt
+TypeScript
+import { Delta as BlockDelta } from "@block-kit/delta";
+import { textDeltaToSketch } from "./components/text/utils/transform";
+import { TSON } from "sketching-utils";
+实现逻辑:
 
+TypeScript
+const handleApplyModification = () => {
+  if (previewData && Array.isArray(previewData.ops)) {
+    // 1. 实例化 Quill Delta 对象
+    const blockDelta = new BlockDelta(previewData.ops);
+    
+    // 2. 核心转换：Quill Delta -> Sketch Internal Format (RichTextLines)
+    const sketchData = textDeltaToSketch(blockDelta);
+    
+    // 3. 序列化并应用到画布状态
+    const payload = TSON.stringify(sketchData);
+    editor.state.apply(new Op(OP_TYPE.REVISE, { 
+        id: activeState.id, 
+        attrs: { [TEXT_ATTRS.DATA]: payload } 
+    }));
+  }
+};
+4. 常见问题排查
+预览窗口空白:
 
-4.2 启动服务
+检查后端返回的 modified_data 是否包含 ops 数组。
 
-后端:
+检查前端 AIPreviewModal 是否正确处理了 ops 格式（如上文 3.2 步骤 2 所示）。
 
-cd backend
-python main.py
-# 服务将运行在 [http://0.0.0.0:8000](http://0.0.0.0:8000)
+点击应用后报错 undefined is not a function (near '...line of lines...'):
 
+这是因为直接将 Quill Delta 对象存入了 Editor State。
 
-前端:
-确保前端代理或 Fetch URL 指向 localhost:8000。
+解决: 必须确保 handleApplyModification 中调用了 textDeltaToSketch 将数据转换回数组格式。
 
-5. 总结与改进方向
+列表样式丢失:
 
-本次更新成功将简单的 AI 对话升级为具备“动作执行”能力的 Agent。
-
-优势：所见即所得的修改预览，避免了 AI 幻觉直接破坏用户简历；严格的 JSON 约束保证了数据格式的安全性。
-
-改进方向：
-
-目前使用 qwen-flash 能够较好处理，但在极其复杂的富文本嵌套下，可能仍需微调 Prompt 以保证 attributes 的精准保留。
-
-可以增加 "流式 diff" 功能，让用户直观看到修改了哪些字词。
+检查后端 Prompt，确认 list: bullet 属性是附加在 \n 字符上的，而不是文本字符上。
