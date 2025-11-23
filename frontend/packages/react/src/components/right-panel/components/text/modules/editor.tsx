@@ -46,9 +46,10 @@ export const RichTextEditor: FC<{
   dataRef: React.MutableRefObject<BlockDelta | null>;
   editor: Editor;
   state: DeltaState;
-  readonly?: boolean; // [新增] 支持只读模式
+  readonly?: boolean;                 // [新增] 只读模式
+  onChange?: (delta: BlockDelta) => void; // [新增] 自定义变更回调
 }> = props => {
-  const { dataRef, editor, state, readonly = false } = props; // [新增] 默认为 false
+  const { dataRef, editor, state, readonly = false, onChange } = props;
   const { mounted } = useIsMounted();
 
   const blockEditor = useMemo(() => {
@@ -80,7 +81,15 @@ export const RichTextEditor: FC<{
 
   const onSaveChange = useMemoFn((current: BlockDelta) => {
     if (!mounted.current) return void 0;
-    if (readonly) return void 0; // [新增] 只读模式下禁止修改 state
+    if (readonly) return void 0; // 只读模式下不执行任何保存
+
+    // [新增] 如果传入了 onChange，则将控制权交给父组件，不直接写入画布
+    if (onChange) {
+      onChange(current);
+      return;
+    }
+
+    // 默认行为：保存到画布 State
     const attrs: Attributes = {
       [TEXT_ATTRS.DATA]: TSON.stringify(textDeltaToSketch(current))!,
     };
@@ -119,7 +128,7 @@ export const RichTextEditor: FC<{
   return (
     <BlockKit editor={blockEditor} readonly={readonly}>
       <div className="block-kit-editor-container">
-        {/* [新增] 只读模式下不显示悬浮工具栏 */}
+        {/* 只读模式下不显示悬浮工具栏 */}
         {!readonly && (
           <FloatToolbar mountDOM={document.body} overridePosition={overridePosition}>
             <Tools.Bold></Tools.Bold>
@@ -136,8 +145,8 @@ export const RichTextEditor: FC<{
         <div className="block-kit-editable-container">
           <div className="block-kit-mount-dom" ref={onMountRef}></div>
           <Editable
-            placeholder={readonly ? "" : "Please Enter..."} // [新增] 只读时不显示占位符
-            autoFocus={!readonly} // [新增] 只读时不自动聚焦
+            placeholder={readonly ? "" : "Please Enter..."}
+            autoFocus={!readonly}
             className="block-kit-editable"
           ></Editable>
         </div>
