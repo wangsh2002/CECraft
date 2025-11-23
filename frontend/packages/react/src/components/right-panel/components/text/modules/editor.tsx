@@ -46,8 +46,9 @@ export const RichTextEditor: FC<{
   dataRef: React.MutableRefObject<BlockDelta | null>;
   editor: Editor;
   state: DeltaState;
+  readonly?: boolean; // [新增] 支持只读模式
 }> = props => {
-  const { dataRef, editor, state } = props;
+  const { dataRef, editor, state, readonly = false } = props; // [新增] 默认为 false
   const { mounted } = useIsMounted();
 
   const blockEditor = useMemo(() => {
@@ -79,6 +80,7 @@ export const RichTextEditor: FC<{
 
   const onSaveChange = useMemoFn((current: BlockDelta) => {
     if (!mounted.current) return void 0;
+    if (readonly) return void 0; // [新增] 只读模式下禁止修改 state
     const attrs: Attributes = {
       [TEXT_ATTRS.DATA]: TSON.stringify(textDeltaToSketch(current))!,
     };
@@ -115,24 +117,27 @@ export const RichTextEditor: FC<{
   };
 
   return (
-    <BlockKit editor={blockEditor} readonly={false}>
+    <BlockKit editor={blockEditor} readonly={readonly}>
       <div className="block-kit-editor-container">
-        <FloatToolbar mountDOM={document.body} overridePosition={overridePosition}>
-          <Tools.Bold></Tools.Bold>
-          <Tools.Italic></Tools.Italic>
-          <Tools.Underline></Tools.Underline>
-          <Tools.Strike></Tools.Strike>
-          <Tools.Link></Tools.Link>
-          <Tools.InlineCode></Tools.InlineCode>
-          <Tools.FontSize></Tools.FontSize>
-          <Tools.FontColor></Tools.FontColor>
-          <Tools.LineHeight></Tools.LineHeight>
-        </FloatToolbar>
+        {/* [新增] 只读模式下不显示悬浮工具栏 */}
+        {!readonly && (
+          <FloatToolbar mountDOM={document.body} overridePosition={overridePosition}>
+            <Tools.Bold></Tools.Bold>
+            <Tools.Italic></Tools.Italic>
+            <Tools.Underline></Tools.Underline>
+            <Tools.Strike></Tools.Strike>
+            <Tools.Link></Tools.Link>
+            <Tools.InlineCode></Tools.InlineCode>
+            <Tools.FontSize></Tools.FontSize>
+            <Tools.FontColor></Tools.FontColor>
+            <Tools.LineHeight></Tools.LineHeight>
+          </FloatToolbar>
+        )}
         <div className="block-kit-editable-container">
           <div className="block-kit-mount-dom" ref={onMountRef}></div>
           <Editable
-            placeholder="Please Enter..."
-            autoFocus
+            placeholder={readonly ? "" : "Please Enter..."} // [新增] 只读时不显示占位符
+            autoFocus={!readonly} // [新增] 只读时不自动聚焦
             className="block-kit-editable"
           ></Editable>
         </div>
