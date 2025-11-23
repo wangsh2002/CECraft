@@ -21,6 +21,7 @@ import { RichTextEditor } from "./modules/editor";
 import { DEFAULT_MODAL_WIDTH, getDefaultTextDelta } from "./utils/constant";
 import { sketchToTextDelta } from "./utils/transform";
 
+
 // Props: editor - 编辑器实例，state - 当前 delta 的状态对象
 export const Text: FC<{ editor: Editor; state: DeltaState }> = props => {
   const { editor, state } = props;

@@ -40,22 +40,39 @@ def get_agent_prompt(user_prompt: str, context_json: str):
     
     ### 任务目标
     1. 分析用户的指令："{user_prompt}"
-    2. 分析当前的富文本内容（JSON格式）：{context_json}
+    2. 参考提供的上下文内容（可能是 Sketch 内部格式）：{context_json}
     3. 判断用户意图是 "修改内容" (modify) 还是 "普通闲聊/提问" (chat)。
-    4. 如果是 "modify"，你需要根据用户指令修改内容，并严格按照原有的 JSON 结构（Quill/Delta 格式）返回修改后的数据。
+    4. 如果是 "modify"，请根据用户指令修改内容，并**必须将其转换为标准的 Quill Delta 格式**输出。
 
-    ### Delta 格式说明
-    Delta 格式通常包含 "ops" 数组，每个元素包含 "insert" (文本) 和可选的 "attributes" (样式)。
-    例如：{{"ops": [{{"insert": "Hello"}}, {{"insert": "World", "attributes": {{"bold": true}}}}]}}
-    **必须保持原有的数据结构层级，只修改 insert 的文本内容或对应的 attributes。**
-
-    ### 输出格式（必须是严格的 JSON）
-    请只输出一个 JSON 对象，不要包含 markdown 标记或额外解释。格式如下：
+    ### Delta 格式严格要求
+    修改后的数据 (modified_data) 必须是一个包含 "ops" 数组的对象。
+    **关键：请务必将原始属性转换为标准的 Quill/BlockKit 属性，不要保留原始的业务字段（如 WEIGHT, SIZE 等）。**
+    
+    请遵循以下属性映射规则：
+    - 加粗：使用 {{"bold": true}} (替代 WEIGHT: "bold")
+    - 字号：使用 {{"fontSize": 14}} (替代 SIZE)
+    - 颜色：使用 {{"color": "#333333"}}
+    - 背景：使用 {{"background": "#eeeeee"}}
+    - 列表：使用 {{"list": "bullet"}} 或 {{"list": "ordered"}} (替代 UNORDERED_LIST_LEVEL)
+      * 注意：列表属性必须附加在换行符 "\\n" 上。
+    - 链接：使用 {{"link": "url"}}
+    
+    ### 输出示例
     {{
-        "intention": "modify" 或 "chat",
-        "reply": "给用户的简短回复，解释你做了什么或回答问题",
-        "modified_data": {{ ...这里是修改后的完整 Delta JSON 对象，如果是 chat 则为 null... }}
+        "intention": "modify",
+        "reply": "已为您优化工作经历部分的描述，使其更加专业。",
+        "modified_data": {{
+            "ops": [
+                {{ "insert": "工作经历", "attributes": {{ "bold": true, "fontSize": 18 }} }},
+                {{ "insert": "\\n", "attributes": {{ "header": 2 }} }},
+                {{ "insert": "负责前端性能优化，提升加载速度 30%。" }},
+                {{ "insert": "\\n", "attributes": {{ "list": "bullet" }} }}
+            ]
+        }}
     }}
+
+    ### 你的输出
+    请只输出一个合法的 JSON 对象，不要包含 Markdown 标记（如 ```json）。
     """
 
 @app.post("/api/ai/agent")
@@ -68,7 +85,7 @@ async def ai_agent_process(request: ChatRequest):
         response = dashscope.Generation.call(
             model="qwen-flash",
             messages=[
-                {'role': 'system', 'content': '你是一个严格遵循 JSON 输出格式的智能助手。'},
+                {'role': 'system', 'content': '你是一个严格遵循 JSON 输出格式的智能助手，负责处理富文本数据转换。'},
                 {'role': 'user', 'content': system_prompt}
             ],
             result_format='message',  # 设置输出为 message 格式

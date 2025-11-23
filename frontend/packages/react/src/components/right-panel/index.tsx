@@ -4,9 +4,10 @@ import type { FC } from "react";
 import { useEffect, useState, useRef } from "react";
 import type { SelectionChangeEvent } from "sketching-core";
 import { EDITOR_EVENT } from "sketching-core";
-import { cs } from "sketching-utils";
+import { cs, TSON } from "sketching-utils"; // [修改] 添加 TSON
 import { TEXT_ATTRS } from "sketching-plugin";
 import { Op, OP_TYPE } from "sketching-delta";
+import { Delta as BlockDelta } from "@block-kit/delta"; // [新增] 引入 BlockDelta
 
 import { useEditor } from "../../hooks/use-editor";
 import { NAV_ENUM } from "../header/utils/constant";
@@ -15,6 +16,8 @@ import { Rect } from "./components/rect";
 import { Text } from "./components/text";
 import { AIPreviewModal } from "./components/ai-preview"; // 引入预览组件
 import styles from "./index.m.scss";
+import { textDeltaToSketch } from "./components/text/utils/transform"; 
+
 
 export const RightPanel: FC = () => {
   const { editor } = useEditor();
@@ -108,22 +111,44 @@ export const RightPanel: FC = () => {
     }
   };
 
-  // 应用修改到画布
+// 应用修改到画布
   const handleApplyModification = () => {
     if (activeState && previewData) {
-        // 将预览数据应用到当前节点
-        // 注意：这里假设 previewData 是符合 TEXT_ATTRS.DATA 结构的 (即 { chars: ... } 或 Delta)
-        // 后端 Agent 需要严格控制输出格式
-        const payload = typeof previewData === 'string' ? previewData : JSON.stringify(previewData);
-        
-        editor.state.apply(new Op(OP_TYPE.REVISE, { 
-            id: activeState.id, 
-            attrs: { [TEXT_ATTRS.DATA]: payload } 
-        }));
-        
-        Message.success("修改已应用");
-        setShowPreview(false);
-        setPreviewData(null);
+      try {
+        // 1. 确保 previewData 是对象
+        let sourceData = previewData;
+        if (typeof previewData === "string") {
+          sourceData = JSON.parse(previewData);
+        }
+
+        // 2. [关键修复] 将 AI 返回的 Quill Delta 转换为 Sketch 内部格式
+        // 检查是否包含 ops，这是 Quill Delta 的特征
+        if (sourceData && Array.isArray(sourceData.ops)) {
+          // 构建 BlockDelta 对象
+          const blockDelta = new BlockDelta(sourceData.ops);
+          
+          // 调用转换函数：BlockDelta -> RichTextLines (Sketch格式)
+          const sketchData = textDeltaToSketch(blockDelta);
+          
+          // 3. 序列化为 storage 格式 (使用 TSON)
+          const payload = TSON.stringify(sketchData);
+
+          editor.state.apply(new Op(OP_TYPE.REVISE, { 
+              id: activeState.id, 
+              attrs: { [TEXT_ATTRS.DATA]: payload } 
+          }));
+          
+          Message.success("修改已应用");
+          setShowPreview(false);
+          setPreviewData(null);
+        } else {
+           console.error("Invalid Delta format:", sourceData);
+           Message.error("应用失败：数据格式不正确");
+        }
+      } catch (e) {
+        console.error("Apply Error:", e);
+        Message.error("应用修改失败，请查看控制台");
+      }
     }
   };
 
