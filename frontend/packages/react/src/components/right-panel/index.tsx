@@ -336,7 +336,6 @@ export const RightPanel: FC = () => {
                   title="AI 评分" 
                   value={reviewResult.score} 
                   style={{ minWidth: 100 }}
-                  valueStyle={{ color: reviewResult.score > 80 ? '#00B42A' : '#FF7D00', fontWeight: 'bold' }} 
                 />
                 <div style={{ flex: 1, background: 'var(--color-fill-2)', padding: 12, borderRadius: 4, fontSize: 13, color: 'var(--color-text-2)' }}>
                   <strong>综合点评：</strong>{reviewResult.summary}
@@ -364,7 +363,7 @@ export const RightPanel: FC = () => {
                     size="small"
                     dataSource={reviewResult.cons}
                     render={(item, index) => <List.Item key={index} style={{ padding: '4px 0' }}>• {item}</List.Item>}
-                    border={false}
+                    bordered={false}
                   />
                 </div>
 
@@ -380,7 +379,7 @@ export const RightPanel: FC = () => {
                          {index + 1}. {item}
                       </List.Item>
                     )}
-                    border={false}
+                    bordered={false}
                   />
                 </div>
               </div>
