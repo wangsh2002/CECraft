@@ -1,0 +1,116 @@
+@import '../../../../styles/variable.scss';
+
+.modalContent {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+// 顶部评分卡片 (保持不变)
+.scoreBoard {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 20px;
+  background: var(--color-fill-2);
+  border-radius: 8px;
+  border: 1px solid var(--color-border-2);
+
+  .scoreWrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 100px;
+
+    .scoreLabel {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--color-text-3);
+    }
+  }
+
+  .summary {
+    flex: 1;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--color-text-2);
+    strong { color: var(--color-text-1); font-weight: 600; }
+  }
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-1);
+}
+
+// [修改] 统一的列表容器
+.listContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+// [修改] 统一的条目样式 (核心修改)
+.reviewItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;       // 统一字体大小
+  line-height: 1.5;
+  color: var(--color-text-2);
+  padding: 10px 12px;    // 统一内边距
+  border-radius: 4px;
+  border-left-width: 3px;
+  border-left-style: solid;
+  
+  .icon {
+    margin-top: 3px;     // 图标与首行文字对齐
+    flex-shrink: 0;
+    font-size: 14px;
+  }
+
+  // 变体：亮点 (绿色)
+  &.pros {
+    background-color: rgba(var(--green-6), 0.1); // 使用 Arco 绿色变量的浅色背景
+    border-left-color: rgb(var(--green-6));
+    
+    .icon { color: rgb(var(--green-6)); }
+  }
+
+  // 变体：不足 (红色)
+  &.cons {
+    background-color: rgba(var(--red-6), 0.1);   // 使用 Arco 红色变量的浅色背景
+    border-left-color: rgb(var(--red-6));
+    
+    .icon { color: rgb(var(--red-6)); }
+  }
+}
+
+// 建议区域 (保持不变)
+.suggestionsBox {
+  background: linear-gradient(180deg, var(--color-fill-2) 0%, rgba(var(--primary-6), 0.05) 100%);
+  border: 1px solid var(--color-border-2);
+  border-radius: 8px;
+  padding: 16px;
+
+  .suggestionList {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--color-text-2);
+
+    li {
+      margin-bottom: 8px;
+      font-size: 13px;
+      line-height: 1.5;
+      padding-left: 4px;
+      &::marker { color: rgb(var(--primary-6)); font-weight: bold; }
+      &:last-child { margin-bottom: 0; }
+    }
+  }
+}

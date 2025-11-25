@@ -1,10 +1,9 @@
 import { 
   IconPlus, IconRobot, IconCopy, IconEye, 
-  IconExperiment, IconCheckCircle, IconCloseCircle, IconBulb // [新增] 图标
+  IconExperiment // [修改] 移除了 IconCheckCircle, IconCloseCircle, IconBulb
 } from "@arco-design/web-react/icon";
 import { 
-  Input, Button, Message, Spin, Tag, 
-  Modal, Statistic, Typography, List, Divider // [新增] UI组件
+  Input, Button, Message, Spin // [修改] 移除了 Modal, Statistic, Typography, List, Divider, Tag
 } from "@arco-design/web-react";
 import type { FC } from "react";
 import { useEffect, useState } from "react";
@@ -22,17 +21,12 @@ import { Image } from "./components/image";
 import { Rect } from "./components/rect";
 import { Text } from "./components/text";
 import { AIPreviewModal } from "./components/ai-preview";
+// [新增] 引入新拆分的组件
+import { ReviewModal, type ReviewResult } from "./components/review-modal";
 import { sketchToTextDelta, textDeltaToSketch } from "./components/text/utils/transform"; 
 import styles from "./index.m.scss";
 
-// [新增] 诊断结果类型定义
-interface ReviewResult {
-  score: number;
-  summary: string;
-  pros: string[];
-  cons: string[];
-  suggestions: string[];
-}
+// [修改] ReviewResult 接口定义已移除，改从 import 导入
 
 export const RightPanel: FC = () => {
   const { editor } = useEditor();
@@ -45,7 +39,7 @@ export const RightPanel: FC = () => {
   const [previewData, setPreviewData] = useState<any>(null);
   const [showPreview, setShowPreview] = useState(false);
 
-  // [新增] 诊断状态
+  // [修改] 诊断状态使用导入的 ReviewResult 类型
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewResult, setReviewResult] = useState<ReviewResult | null>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
@@ -75,7 +69,7 @@ export const RightPanel: FC = () => {
   const activeState = getActiveState();
   const isTextSelected = activeState?.key === NAV_ENUM.TEXT;
 
-  // [重构] 提取公共逻辑：获取当前选中内容的 Context
+  // 提取公共逻辑：获取当前选中内容的 Context
   const extractContext = (): string => {
     if (!activeState) return "";
     const rawSketchData = activeState.getAttr(TEXT_ATTRS.DATA);
@@ -96,7 +90,7 @@ export const RightPanel: FC = () => {
     return "";
   };
 
-  //  处理诊断请求
+  // 处理诊断请求
   const handleReviewSubmit = async () => {
     if (isReviewing) return;
     if (!isTextSelected || !activeState) {
@@ -129,7 +123,7 @@ export const RightPanel: FC = () => {
     }
   };
 
-  // 处理 AI 修改请求 (逻辑已简化，复用 extractContext)
+  // 处理 AI 修改请求
   const handleAISubmit = async (value: string) => {
     if (!value || isLoading) return;
     if (!isTextSelected || !activeState) {
@@ -141,7 +135,6 @@ export const RightPanel: FC = () => {
     setAiResponse("");
     setPreviewData(null);
 
-    // [调用] 使用提取好的函数
     const contextStr = extractContext();
 
     try {
@@ -177,35 +170,6 @@ export const RightPanel: FC = () => {
     }
   };
 
-  // 应用修改逻辑 (保留)
-  const handleApplyModification = () => {
-    if (activeState && previewData) {
-      try {
-        let sourceData = previewData;
-        if (typeof previewData === "string") {
-          sourceData = JSON.parse(previewData);
-        }
-
-        if (sourceData && Array.isArray(sourceData.ops)) {
-          const blockDelta = new BlockDelta(sourceData.ops);
-          const sketchData = textDeltaToSketch(blockDelta);
-          const payload = TSON.stringify(sketchData);
-
-          editor.state.apply(new Op(OP_TYPE.REVISE, { 
-              id: activeState.id, 
-              attrs: { [TEXT_ATTRS.DATA]: payload } 
-          }));
-          
-          Message.success("修改已应用");
-          setShowPreview(false);
-          setPreviewData(null);
-        }
-      } catch (e) {
-        console.error("Apply Error:", e);
-      }
-    }
-  };
-
   const loadEditor = () => {
     if (!activeState) return null;
     switch (activeState.key) {
@@ -229,7 +193,6 @@ export const RightPanel: FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', fontWeight: 600, gap: 6, color: 'var(--color-text-1)' }}>
               <IconRobot style={{ color: '#165DFF' }} /> 简历智能助手
             </div>
-            {/* [新增] 只有选中文本时显示诊断按钮 */}
             {isTextSelected && (
                <Button 
                  size="mini" 
@@ -314,78 +277,12 @@ export const RightPanel: FC = () => {
             />
         )}
 
-        {/* [新增] 诊断结果弹窗 */}
-        <Modal
-          title={
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <IconExperiment style={{ color: '#165DFF' }} /> 简历诊断报告
-            </div>
-          }
+        {/* [新增] 替换为拆分后的诊断结果弹窗组件 */}
+        <ReviewModal 
           visible={showReviewModal}
-          onOk={() => setShowReviewModal(false)}
-          onCancel={() => setShowReviewModal(false)}
-          hideCancel
-          okText="我知道了"
-          style={{ width: 600 }}
-        >
-          {reviewResult && (
-            <div>
-              {/* 分数和总评 */}
-              <div style={{ display: 'flex', gap: 24, marginBottom: 24, alignItems: 'center' }}>
-                <Statistic 
-                  title="AI 评分" 
-                  value={reviewResult.score} 
-                  style={{ minWidth: 100 }}
-                />
-                <div style={{ flex: 1, background: 'var(--color-fill-2)', padding: 12, borderRadius: 4, fontSize: 13, color: 'var(--color-text-2)' }}>
-                  <strong>综合点评：</strong>{reviewResult.summary}
-                </div>
-              </div>
-
-              <Divider />
-
-              {/* 详细列表 */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div>
-                  <Typography.Title heading={6} style={{ margin: '0 0 8px 0', color: '#00B42A' }}>
-                    <IconCheckCircle /> 亮点 (Pros)
-                  </Typography.Title>
-                  {reviewResult.pros.map((item, idx) => (
-                    <Tag key={idx} color="green" style={{ margin: '0 8px 8px 0' }}>{item}</Tag>
-                  ))}
-                </div>
-
-                <div>
-                  <Typography.Title heading={6} style={{ margin: '0 0 8px 0', color: '#F53F3F' }}>
-                    <IconCloseCircle /> 不足 (Cons)
-                  </Typography.Title>
-                  <List
-                    size="small"
-                    dataSource={reviewResult.cons}
-                    render={(item, index) => <List.Item key={index} style={{ padding: '4px 0' }}>• {item}</List.Item>}
-                    bordered={false}
-                  />
-                </div>
-
-                <div style={{ background: '#E8FFEA', padding: 12, borderRadius: 8, border: '1px dashed #00B42A' }}>
-                  <Typography.Title heading={6} style={{ margin: '0 0 8px 0', color: '#009A29' }}>
-                    <IconBulb /> 优化建议
-                  </Typography.Title>
-                  <List
-                    size="small"
-                    dataSource={reviewResult.suggestions}
-                    render={(item, index) => (
-                      <List.Item key={index} style={{ padding: '4px 0', color: '#005E19' }}>
-                         {index + 1}. {item}
-                      </List.Item>
-                    )}
-                    bordered={false}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-        </Modal>
+          onClose={() => setShowReviewModal(false)}
+          result={reviewResult}
+        />
       </div>
     </div>
   );
