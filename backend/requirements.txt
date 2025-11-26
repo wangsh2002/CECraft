@@ -5,3 +5,6 @@ pydantic==2.12.4
 uvicorn==0.38.0
 dashscope
 pydantic-settings
+aiohttp
+crawl4ai
+beautifulsoup4
