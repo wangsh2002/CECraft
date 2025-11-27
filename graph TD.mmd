@@ -1,0 +1,58 @@
+graph TD
+    %% --- 样式定义 (让图更好看) ---
+    classDef agent fill:#ffebcc,stroke:#ff9900,stroke-width:2px,color:#333;
+    classDef tool fill:#e1f5fe,stroke:#0288d1,stroke-width:1px,color:#333;
+    classDef storage fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,stroke-dasharray: 5 5,color:#333;
+    classDef finish fill:#333,stroke:#333,stroke-width:2px,color:#fff;
+
+    %% --- 主流程 ---
+    User[💻 用户前端] -->|POST /api/ai/agent| Supervisor
+    
+    subgraph Brain [🧠 总控大脑]
+        Supervisor{意图路由}:::agent
+    end
+
+    %% 分支路由
+    Supervisor -- "闲聊" --> ChatBot[💬 Chat Agent]:::agent
+    Supervisor -- "直接修改" --> Drafter
+    Supervisor -- "需要外部信息/JD对标" --> Researcher[🕵️ Researcher Agent]:::agent
+
+    %% --- 资料检索模块 ---
+    subgraph Research_Tools [🔍 智能检索工具链]
+        direction TB
+        Researcher --> ToolRouter{检索源判断}
+        
+        %% 路径 A: 外部工具
+        ToolRouter -- "搜JD/公司" --> SearXNG[🌐 联网搜索]:::tool
+        SearXNG --> Crawl4AI[🕷️ 爬虫解析]:::tool
+        Crawl4AI --> Summary[📝 关键信息摘要]:::tool
+        
+        %% 路径 B: 内部知识库
+        ToolRouter -- "搜话术/范例" --> VectorDB[(🛢️ 向量数据库)]:::storage
+        VectorDB --> ReRank[⚖️ 语义重排序]:::tool
+        
+        %% 数据融合
+        Summary --> Merger[⚗️ 上下文融合]:::tool
+        ReRank --> Merger
+    end
+    
+    %% 关键路径优化：Researcher 获取数据后，直接传给 Drafter
+    Merger -->|包含: JD重点+优秀范例| Drafter
+
+    %% --- 生产与质检模块 ---
+    subgraph Iteration_Loop [⚡ 写作与质检闭环]
+        direction TB
+        Drafter[✍️ Drafter Agent]:::agent
+        Reviewer[🧐 Reviewer Agent]:::agent
+        
+        Drafter -->|提交草稿| ReviewLogic{评审决策}
+        
+        ReviewLogic -- "❌ 不合格 (附修改意见)" --> Drafter
+        ReviewLogic -- "✅ 通过" --> Formatter[⚙️ 格式化 JSON]:::tool
+    end
+
+    %% --- 统一输出 ---
+    ChatBot --> FinalResponse
+    Formatter --> FinalResponse
+    
+    FinalResponse[🚀 API 标准响应]:::finish

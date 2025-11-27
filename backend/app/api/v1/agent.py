@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.schemas.agent import ChatRequest, AgentResponse, ReviewRequest, ReviewResponse
-from app.services.llm_service import llm_service
+from backend.app.services.agent_workflow import llm_service
 
 router = APIRouter()
 
