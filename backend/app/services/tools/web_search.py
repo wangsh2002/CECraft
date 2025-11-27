@@ -12,7 +12,7 @@ from app.core.config import settings
 # ==========================================
 # 为了节省成本，这里建议使用 qwen-turbo 或 qwen-plus，不需要用 max
 llm = ChatTongyi(
-    model="qwen-plus",
+    model="qwen-turbo",
     dashscope_api_key=settings.DASHSCOPE_API_KEY,
     temperature=0.1
 )
