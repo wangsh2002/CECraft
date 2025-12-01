@@ -4,6 +4,35 @@ from langchain_core.output_parsers import JsonOutputParser
 from app.core.config import settings
 
 # ================= PROMPTS (保持原样) =================
+SUPERVISOR_SYSTEM_PROMPT = """
+你是智能简历系统的总控大脑 (Supervisor)。你的任务是分析用户输入，将其路由到最合适的处理意图 (Intention)。
+
+请严格从以下三个选项中选择一个：
+
+1. **research (调研模式)**: 
+   - 适用场景：用户提供了 JD (职位描述)、职位链接、公司名称，或者明确要求“对标某岗位”、“针对某公司优化”、“寻找行业范例”等需要外部信息的情况。
+   - 关键词：JD、链接、对标、调研、字节、腾讯、参考。
+
+2. **modify (修改模式)**: 
+   - 适用场景：用户明确要求对现有简历内容进行具体的修改、润色、翻译、精简或扩写，且不需要外部信息辅助。
+   - 关键词：修改、润色、精简、翻译、改错别字、优化这段话。
+
+3. **chat (闲聊模式)**: 
+   - 适用场景：普通的问候、自我介绍、关于系统功能的咨询，或者与简历修改无直接关联的通用对话。
+   - 关键词：你好、谢谢、你是谁、再见。
+
+### 输出格式
+请务必直接输出一个合法的 JSON 对象，不要包含 Markdown 标记（如 ```json ... ```）。
+JSON 对象必须包含以下两个字段：
+- "next_agent": 对应上面的选项值，必须是 "research", "modify", 或 "chat" 之一。
+- "reasoning": 简要说明做出该判断的理由。
+
+### 输出示例
+{{
+    "next_agent": "modify",
+    "reasoning": "用户明确请求润色简历中的工作经历部分，不涉及外部JD。"
+}}
+"""
 
 AGENT_SYSTEM_PROMPT = """
 你是一个专业的简历优化助手和数据处理 Agent。
@@ -73,19 +102,35 @@ class LLMService:
         self._init_chains()
 
     def _init_chains(self):
-        # 1. Init Modify Agent Chain
+        # 1. Init supervisor Agent Chain
+        supervisor_prompt = ChatPromptTemplate.from_messages([
+            ("system", SUPERVISOR_SYSTEM_PROMPT),
+            ("user", "{input}")
+        ])
+        self.supervisor_chain = supervisor_prompt | self.llm | self.parser
+
+        # 2. Init Modify Agent Chain
         agent_prompt = ChatPromptTemplate.from_messages([
             ("system", AGENT_SYSTEM_PROMPT),
             ("user", "用户的指令：{user_prompt}\n上下文内容：{context_json}")
         ])
         self.agent_chain = agent_prompt | self.llm | self.parser
 
-        # 2. Init Review Agent Chain
+        # 3. Init Review Agent Chain
         review_prompt = ChatPromptTemplate.from_messages([
             ("system", REVIEW_SYSTEM_PROMPT),
             ("user", "请诊断以下简历内容：\n{resume_content}")
         ])
         self.review_chain = review_prompt | self.llm | self.parser
+
+        #  大脑调用方法
+    async def process_supervisor_request(self, prompt: str):
+        """调用总控大脑进行路由"""
+        # 使用 ainvoke 进行异步调用
+        return await self.supervisor_chain.ainvoke({
+            "input": prompt
+        })
+    
 
     def process_agent_request(self, prompt: str, context: str):
         """调用修改 Agent"""

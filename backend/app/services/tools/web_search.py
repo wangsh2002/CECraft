@@ -127,8 +127,7 @@ async def _summarize_content(query: str, raw_contents: List[str]) -> str:
     1. **去除噪音**：忽略广告、导航栏等无关信息。
     2. **精准回答**：只保留与用户问题直接相关的内容。
     3. **格式清晰**：使用 Markdown 列表整理关键点。
-    4. **引用来源**：如果可能，提到信息来自哪个 URL。
-    5. **不要瞎编**：只能基于提供的【搜索结果】回答。
+    4. **不要瞎编**：只能基于提供的【搜索结果】回答。
     """
     
     prompt_template = ChatPromptTemplate.from_messages([
