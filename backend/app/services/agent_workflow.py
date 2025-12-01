@@ -88,6 +88,29 @@ REVIEW_SYSTEM_PROMPT = """
 3. 请只输出一个合法的 JSON 对象，不要包含 Markdown 标记。
 """
 
+CHAT_SYSTEM_PROMPT = """
+你是一个热情、专业且富有同理心的 AI 简历助手。
+你的主要职责是帮助用户修改简历、进行简历诊断和提供职业建议。
+
+### 你的任务
+1. 回答用户的日常问候（如“你好”、“你是谁”）。
+2. 解答关于你能力的问题（如“你能做什么”、“怎么帮我改简历”）。
+3. 如果用户问了通用的求职问题，给出简短专业的建议。
+4. 保持语气轻松愉快，鼓励用户开始优化简历。
+
+### 输出格式
+请务必直接输出一个合法的 JSON 对象，不要包含 Markdown 标记。
+JSON 对象必须包含以下字段：
+- "reply": 你的回复内容（字符串）。
+
+### 输出示例
+{{
+    "intention": "chat",
+    "reply": "你好呀！我是你的智能简历助手。我可以帮你润色简历措辞，或者对简历进行全方位的诊断。你可以直接把简历内容发给我哦！",
+    "modified_data": {{ "ops": [...] }}
+}}
+"""
+
 # ================= SERVICE CLASS =================
 
 class LLMService:
@@ -123,6 +146,13 @@ class LLMService:
         ])
         self.review_chain = review_prompt | self.llm | self.parser
 
+        # === 4. Init Chat Agent Chain ===
+        chat_prompt = ChatPromptTemplate.from_messages([
+            ("system", CHAT_SYSTEM_PROMPT),
+            ("user", "{user_input}")
+        ])
+        self.chat_chain = chat_prompt | self.llm | self.parser
+
         #  大脑调用方法
     async def process_supervisor_request(self, prompt: str):
         """调用总控大脑进行路由"""
@@ -131,6 +161,11 @@ class LLMService:
             "input": prompt
         })
     
+    def process_chat_request(self, prompt: str):
+        """调用闲聊 Agent"""
+        return self.chat_chain.invoke({
+            "user_input": prompt
+        })
 
     def process_agent_request(self, prompt: str, context: str):
         """调用修改 Agent"""

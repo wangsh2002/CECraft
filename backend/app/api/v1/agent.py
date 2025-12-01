@@ -47,7 +47,7 @@ async def execute_agent_workflow(request: ChatRequest):
             # 模拟调用调研逻辑 (未来替换为真实函数)
             # content = await llm_service.process_research(request.message)
             content = f"收到，正在根据您的要求调研相关 JD 和背景信息... (基于意图: {reason})"
-            
+            print("research")
             return AgentResponse(
                 intention="research",
                 reply=content,
@@ -59,7 +59,7 @@ async def execute_agent_workflow(request: ChatRequest):
             # 调用 Modify Agent 获取修改结果
             # 假设 process_agent_request 返回的是 {"intention": "modify", "reply": "...", "modified_data": ...}
             # 如果你的 LLMService 直接返回对象，这里可能需要适配一下
-            
+            print("modify")
             agent_result = llm_service.process_agent_request(
                 prompt=request.prompt, 
                 context=request.context # 这里需填入当前的简历上下文
@@ -73,10 +73,12 @@ async def execute_agent_workflow(request: ChatRequest):
             )
         # --- 情况 C: 闲聊/其他 (Chat) ---
         elif target_agent == "chat":
+            print("chat")
+            chat_result = llm_service.process_chat_request(prompt=request.prompt)
 
             return AgentResponse(
                 intention="chat",
-                reply=f"好的。({reason})", # 简单回复，或者调用 chat_chain
+                reply=chat_result.get("reply", f"好的。({reason})"), # 简单回复，或者调用 chat_chain
                 modified_data=None
             )
 
