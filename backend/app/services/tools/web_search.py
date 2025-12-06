@@ -1,9 +1,9 @@
-import aiohttp
 import asyncio
 from typing import List
 from langchain_community.chat_models import ChatTongyi
 from langchain_core.prompts import ChatPromptTemplate
 from crawl4ai import AsyncWebCrawler
+from ddgs import DDGS
 
 from app.core.config import settings
 
@@ -26,8 +26,8 @@ async def perform_web_search(query: str) -> str:
     """
     print(f"--- [Researcher] 开始联网搜索: {query} ---")
     
-    # 步骤 A: 调用 SearXNG 获取 URL 列表
-    urls = await _search_searxng(query, limit=3) # 为了速度，我们先只看前3个
+    # 步骤 A: 调用 DuckDuckGo 获取 URL 列表
+    urls = await _search_duckduckgo(query, limit=3) # 为了速度，我们先只看前3个
     if not urls:
         return "未找到相关网络搜索结果。"
 
@@ -46,33 +46,23 @@ async def perform_web_search(query: str) -> str:
 # 3. 内部工具函数 (Helper Functions)
 # ==========================================
 
-async def _search_searxng(query: str, limit: int = 3) -> List[str]:
+async def _search_duckduckgo(query: str, limit: int = 3) -> List[str]:
     """
-    私有函数：访问 SearXNG API 获取搜索结果链接
+    私有函数：使用 DuckDuckGo 获取搜索结果链接
     """
-    # 构造请求参数，format=json 是关键
-    params = {
-        "q": query,
-        "format": "json",
-        "language": "zh-CN"
-    }
-    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{settings.SEARXNG_BASE_URL}/search", params=params, timeout=5) as resp:
-                if resp.status != 200:
-                    print(f"SearXNG 请求失败: {resp.status}")
-                    return []
-                
-                data = await resp.json()
-                # 提取前 N 个结果的 URL
-                results = data.get("results", [])
-                urls = [r["url"] for r in results[:limit]]
-                print(f"SearXNG 返回链接: {urls}")
-                return urls
+        # DDGS 是同步库，为了不阻塞异步循环，我们在线程池中运行
+        def run_search():
+            with DDGS() as ddgs:
+                # text() 方法返回一个生成器，我们需要将其转换为列表
+                # max_results 参数控制返回结果数量
+                return [r['href'] for r in ddgs.text(query, max_results=limit)]
+        
+        urls = await asyncio.to_thread(run_search)
+        print(f"DuckDuckGo 返回链接: {urls}")
+        return urls
     except Exception as e:
-        print(f"SearXNG 连接异常: {str(e)}")
-        # 兜底：如果搜索挂了，返回空列表，不要让程序崩溃
+        print(f"DuckDuckGo 搜索异常: {str(e)}")
         return []
 
 async def _crawl_concurrently(urls: List[str]) -> List[str]:

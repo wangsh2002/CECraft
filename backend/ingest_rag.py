@@ -116,11 +116,15 @@ def chunk_text(text: str, max_chars: int = 1000, overlap: int = 200) -> List[str
 def call_embedding_api(texts: List[str], api_url: str, api_key: Optional[str] = None) -> List[List[float]]:
     """
     调用阿里云 DashScope (兼容 OpenAI 协议) 嵌入 API
+    Args:
+        texts (List[str]): 待嵌入的文本列表
+        api_url (str): 嵌入 API 地址
+        api_key (Optional[str]): API Key
+    Returns:
+        List[List[float]]: 嵌入向量列表
     """
-    # 简单的预处理，去除换行符，有助于 embedding 质量
+    # 预处理，去除换行符，有助于 embedding 质量
     texts = [t.replace("\n", " ") for t in texts]
-
-    print(f"[DEBUG] call_embedding_api: calling {api_url} with {len(texts)} texts")
     
     try:
         # 初始化 OpenAI 客户端 (用于连接阿里云兼容接口)
@@ -130,7 +134,6 @@ def call_embedding_api(texts: List[str], api_url: str, api_key: Optional[str] = 
         )
 
         # 调用接口
-        # 阿里云推荐模型: text-embedding-v3 (如果不指定维度，默认可能是 1024)
         resp = client.embeddings.create(
             model="text-embedding-v3", 
             input=texts,
@@ -145,8 +148,6 @@ def call_embedding_api(texts: List[str], api_url: str, api_key: Optional[str] = 
         return embeddings
 
     except Exception as e:
-        print(f"[ERROR] call_embedding_api failed: {e}")
-        # 如果是 API Key 问题，这里通常会抛出 AuthenticationError
         raise RuntimeError(f"阿里云 Embedding 调用失败: {e}")
 
 
@@ -167,14 +168,14 @@ def connect_milvus(host: str, port: str):
         print("connected to Milvus")
         
     except Exception as e:
-        print(f"[ERROR] Failed to connect to Milvus: {e}")
+        print(f"Failed to connect to Milvus: {e}")
         raise
 
 
 def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') -> Collection:
     # 阿里云 v3 模型通常使用 COSINE 相似度效果较好，也可以用 L2
-    print(f"[DEBUG] ensure_collection: checking collection {collection_name} dim={dim} metric={metric}")
     
+    # =========== 检查集合是否存在 ==========
     if utility.has_collection(collection_name):
         coll = Collection(collection_name)
         # 检查现有集合的维度
@@ -186,14 +187,17 @@ def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') ->
             print(f"[DEBUG] ensure_collection: dropping collection {collection_name} due to dim mismatch")
             utility.drop_collection(collection_name)
 
-    # 创建新集合
+    # ========== 创建新集合 ==========
+    # 定义Schema
+    #  定义主键字段
     pk = FieldSchema(name='pk', dtype=DataType.INT64, is_primary=True, auto_id=True)
+    #  定义向量字段
     vec = FieldSchema(name='embedding', dtype=DataType.FLOAT_VECTOR, dim=dim)
-    # 增加元数据长度以防溢出
+    #  定义标量字段
     meta = FieldSchema(name='metadata', dtype=DataType.VARCHAR, max_length=65535)
-    
     schema = CollectionSchema(fields=[pk, vec, meta], description='rag chunks')
-    print(f"[DEBUG] ensure_collection: creating collection {collection_name}")
+    
+    # 创建集合
     coll = Collection(name=collection_name, schema=schema)
     
     # 创建索引
@@ -273,15 +277,11 @@ def ingest_directory(
         metadatas_for_file = []
         for i in range(0, len(chunks), BATCH):
             batch_texts = chunks[i:i+BATCH]
-            print(f"[DEBUG] ingest_directory: embedding batch start={i} batch_size={len(batch_texts)}")
-            try:
-                embeddings = call_embedding_api(batch_texts, api_url=api_url, api_key=api_key)
-            except Exception as e:
-                print(f"嵌入失败: 文件={path} batch_start={i} 错误={e}")
-                raise
+
+            # 调用嵌入 API
+            embeddings = call_embedding_api(batch_texts, api_url=api_url, api_key=api_key)
             if not embeddings:
                 raise RuntimeError("嵌入 API 未返回向量")
-            print(f"[DEBUG] ingest_directory: received {len(embeddings)} embeddings for batch starting at {i}")
             
             # 初始化 collection
             if first_dim is None:
