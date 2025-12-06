@@ -181,11 +181,9 @@ def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') ->
         # 检查现有集合的维度
         field = [f for f in coll.schema.fields if f.dtype == DataType.FloatVector]
         if field and field[0].params.get('dim') == dim:
-            print(f"[DEBUG] ensure_collection: collection {collection_name} exists and dim matches")
             return coll
         else:
-            print(f"[DEBUG] ensure_collection: dropping collection {collection_name} due to dim mismatch")
-            utility.drop_collection(collection_name)
+            raise ValueError(f"Collection {collection_name} exists but dimension mismatch")
 
     # ========== 创建新集合 ==========
     # 定义Schema

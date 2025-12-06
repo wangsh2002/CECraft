@@ -18,7 +18,8 @@ except ImportError as e:
 
 async def main():
     # 测试用的查询词
-    query = "agent岗位需求"
+    # query = "agent岗位需求" -> "agent" 含义太广，容易搜到房产中介，改为 "AI Agent" 更精准
+    query = "AI Agent岗位需求"
     
     print(f"🚀 [Test] 开始测试 perform_web_search，查询词: '{query}'")
     print("-" * 50)

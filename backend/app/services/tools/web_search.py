@@ -77,9 +77,9 @@ async def _crawl_concurrently(urls: List[str]) -> List[str]:
             # arun 是 crawl4ai 的核心异步方法
             result = await crawler.arun(url=url)
             if result.success:
-                # 我们只需要 markdown 格式，且为了防爆 Token，截取前 2000 字符
-                # 这里的逻辑是：通常重要信息都在文章开头
-                return f"来源URL: {url}\n内容摘要:\n{result.markdown[:2000]}..." 
+                # 我们只需要 markdown 格式，且为了防爆 Token，截取前 6000 字符
+                # 这里的逻辑是：通常重要信息都在文章开头，但 2000 可能太短了
+                return f"来源URL: {url}\n内容摘要:\n{result.markdown[:6000]}..." 
             else:
                 return ""
         except Exception as e:
@@ -111,11 +111,16 @@ async def _summarize_content(query: str, raw_contents: List[str]) -> str:
     # 构造 Prompt
     system_prompt = """
     你是一个专业的互联网信息情报员。
-    你的任务是根据用户的问题，从给定的多篇网页抓取内容中，提取核心信息。
+    你的任务是根据用户的问题，从给定的多篇网页抓取内容中，提取**尽可能详细**的信息。
+    
+    特别注意：
+    - 如果用户询问“岗位需求”或“招聘要求”，请务必提取具体的**硬性技能**（如Python, LangChain）、**软性技能**、**工作职责**、**经验要求**等细节。
+    - 不要只给出笼统的总结（如“需要编程能力”），而要给出具体的描述（如“精通Python，熟悉异步编程”）。
+    - 如果原文包含具体的列表或要点，请尽量保留。
     
     要求：
     1. **去除噪音**：忽略广告、导航栏等无关信息。
-    2. **精准回答**：只保留与用户问题直接相关的内容。
+    2. **细节优先**：优先保留具体的名词、工具名、技术栈和数据。
     3. **格式清晰**：使用 Markdown 列表整理关键点。
     4. **不要瞎编**：只能基于提供的【搜索结果】回答。
     """
