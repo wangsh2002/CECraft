@@ -15,7 +15,7 @@ async def ai_review_process(request: ReviewRequest):
         # 调用 Service
         # 注意：如果 process_review_request 是异步函数，记得加 await
         # 这里保持你原有的同步调用写法，如果报错 'coroutine object'，请改为 await llm_service...
-        result = llm_service.process_review_request(request.resume_content)
+        result = await llm_service.process_review_request(request.resume_content)
         
         print("诊断完成:", result)
         
@@ -31,83 +31,95 @@ async def ai_review_process(request: ReviewRequest):
         print(f"Review Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# router / api.py
+
 @router.post("/agent", response_model=AgentResponse) 
 async def execute_agent_workflow(request: ChatRequest):
-    """
-    [智能体工作流入口]
-    接收用户指令 -> 大脑路由 -> 执行任务 -> 返回统一格式 AgentResponse
-    """
     try:
-        # === 1. 大脑思考 (Supervisor) ===
-        # 这里的 prompt 比如是："帮我查一下现在 Java 高级开发的 JD 要求"
+        # === 1. Supervisor 决策 ===
         decision = await llm_service.process_supervisor_request(request.prompt)
-        
         target_agent = decision.get("next_agent") 
         reason = decision.get("reasoning")
         
-        print(f"Workflow 决策: 目标Agent={target_agent}, 理由={reason}")
+        print(f"Workflow 决策: {target_agent} | 原因: {reason}")
         
-        # === 2. 执行具体 Agent 逻辑并组装响应 ===
-        
-        # --- 情况 A: 调研专员 (Researcher) ---
-        if target_agent == "research":
-            print(f"--- [Researcher] 启动联网搜索: {request.prompt} ---")
-            
-            # [核心修改] 真实调用 Web Search
-            # perform_web_search 是异步函数，必须加 await
+        # === 2. 执行逻辑分流 ===
+
+        # --- 情况 A: 纯调研 (只回答，不改简历) ---
+        if target_agent == "research_consult":
+            print(f"--- [Research Consult] 启动搜索 ---")
             try:
                 search_summary = await perform_web_search(request.prompt)
-            except Exception as e:
-                print(f"搜索工具执行失败: {e}")
-                search_summary = "抱歉，联网搜索服务暂时不可用。"
-
-            # 组装更友好的回复
+            except Exception:
+                search_summary = "无法获取外部信息"
+            
             final_reply = f"{reason}\n\n---\n**为您找到的调研信息：**\n{search_summary}"
-
+            
             return AgentResponse(
-                intention="research",
+                intention="research", # 前端可以用这个标记来决定是否显示"应用修改"按钮
                 reply=final_reply,
-                modified_data=None # 调研通常只返回文本，不修改简历
+                modified_data=None # 关键：这里没有 ops 数据
             )
 
-        # --- 情况 B: 修改 (modify) ---
+        # --- 情况 B: 调研 + 修改 (链式调用) ---
+        elif target_agent == "research_modify":
+            print(f"--- [Research & Modify] 启动搜索 + 修改 ---")
+            
+            # 1. 先搜索
+            try:
+                # 优化点：对于"根据JD修改"，我们可以把 Prompt 直接作为搜索词，或者让 LLM 提取搜索词
+                search_summary = await perform_web_search(request.prompt)
+            except Exception:
+                search_summary = "（网络搜索失败，将尝试仅根据通用知识修改）"
+            
+            print(f"--- 搜索完成，传入 Modify Agent ---")
+
+            # 2. 将搜索结果注入 Modify Agent
+            # 注意：调用我们在上一步修改过的支持 reference_info 的接口
+            agent_result = await llm_service.process_agent_request(
+                prompt=request.prompt,        
+                context=request.context,      
+                reference_info=search_summary 
+            )
+
+            # 3. 组装复合回复
+            final_reply = (
+                f"**参考依据：** 已参考相关职位/行业数据。\n"
+                f"{reason}\n"
+                f"---\n{agent_result.get('reply')}"
+            )
+
+            return AgentResponse(
+                intention="modify", 
+                reply=final_reply,
+                modified_data=agent_result.get("modified_data") # 关键：返回修改数据
+            )
+
+        # --- 情况 C: 直接修改 (不搜索) ---
         elif target_agent == "modify":
-            print("--- [Modify] 进入修改模式 ---")
-            # 调用 Modify Agent 获取修改结果
-            # 如果 process_agent_request 内部涉及 LLM 调用，建议查看是否需要 await
-            agent_result = llm_service.process_agent_request(
+            print("--- [Direct Modify] ---")
+            agent_result = await llm_service.process_agent_request(
                 prompt=request.prompt, 
-                context=request.context # 简历上下文
+                context=request.context,
+                reference_info="无" # 明确告知没有外部参考
             )
             
             return AgentResponse(
                 intention="modify",
-                reply=agent_result.get("reply", "处理完成"),
-                modified_data=agent_result.get("modified_data") # 这里包含 ops
+                reply=agent_result.get("reply"),
+                modified_data=agent_result.get("modified_data")
             )
 
-        # --- 情况 C: 闲聊/其他 (Chat) ---
-        elif target_agent == "chat":
-            print("--- [Chat] 进入闲聊模式 ---")
-            chat_result = llm_service.process_chat_request(prompt=request.prompt)
-
+        # --- 情况 D: 闲聊 ---
+        else: # chat
+            chat_result = await llm_service.process_chat_request(request.prompt)
             return AgentResponse(
                 intention="chat",
-                reply=chat_result.get("reply", f"好的，收到。({reason})"), 
-                modified_data=None
-            )
-
-        # --- 兜底 ---
-        else:
-             return AgentResponse(
-                intention="chat",
-                reply=f"收到指令，但暂不支持该操作 ({target_agent})。",
+                reply=chat_result.get("reply"),
                 modified_data=None
             )
 
     except Exception as e:
-        print(f"Workflow Error: {str(e)}")
-        # 打印详细堆栈有助于调试
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

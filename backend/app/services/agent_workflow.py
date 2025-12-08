@@ -3,45 +3,54 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from app.core.config import settings
 
-# ================= PROMPTS (保持原样) =================
+# ================= 1. SUPERVISOR PROMPT (核心修改：细分意图) =================
 SUPERVISOR_SYSTEM_PROMPT = """
-你是智能简历系统的总控大脑 (Supervisor)。你的任务是分析用户输入，将其路由到最合适的处理意图 (Intention)。
+你是智能简历系统的总控大脑 (Supervisor)。你的任务是分析用户输入，将其路由到最合适的处理意图。
 
-请严格从以下三个选项中选择一个：
+请严格从以下 **四个** 选项中选择一个：
 
-1. **research (调研模式)**: 
-   - 适用场景：用户提供了 JD (职位描述)、职位链接、公司名称，或者明确要求“对标某岗位”、“针对某公司优化”、“寻找行业范例”等需要外部信息的情况。
-   - 关键词：JD、链接、对标、调研、字节、腾讯、参考。
+1. **research_consult (调研咨询)**: 
+    - 适用场景：用户**仅仅想查询**外部信息，如薪资范围、面试题、公司背景、行业趋势，但**没有**明确表达要修改简历。
+    - 关键词：查一下、是多少、什么要求、面试题、薪资、行情、调研。
+    - 示例："帮我查一下现在 Python 后端的薪资"、"字节跳动的面试风格是怎样的"。
 
-2. **modify (修改模式)**: 
-   - 适用场景：用户明确要求对现有简历内容进行具体的修改、润色、翻译、精简或扩写，且不需要外部信息辅助。
-   - 关键词：修改、润色、精简、翻译、改错别字、优化这段话。
+2. **research_modify (调研并修改)**: 
+    - 适用场景：用户希望**利用搜索到的外部信息来优化或修改**简历。通常包含“根据...修改”、“对标...优化”、“参考...调整”等指令。
+    - 关键词：根据JD修改、对标大厂优化、参考这个链接润色、结合行情调整。
+    - 示例："根据现在市场上 Java 高级的要求，帮我优化技能列表"、"帮我看看这个岗位链接，然后针对性修改我的简历"。
 
-3. **chat (闲聊模式)**: 
-   - 适用场景：普通的问候、自我介绍、关于系统功能的咨询，或者与简历修改无直接关联的通用对话。
-   - 关键词：你好、谢谢、你是谁、再见。
+3. **modify (直接修改)**: 
+    - 适用场景：用户指令明确，**不需要**外部信息辅助，直接对简历内容进行润色、精简、翻译或纠错。
+    - 关键词：润色这段话、改短一点、翻译成英文、纠正错别字。
+
+4. **chat (闲聊)**: 
+    - 适用场景：问候、功能询问、通用建议，不涉及具体的搜索或修改动作。
 
 ### 输出格式
-请务必直接输出一个合法的 JSON 对象，不要包含 Markdown 标记（如 ```json ... ```）。
+请务必直接输出一个合法的 JSON 对象，不要包含 Markdown 标记。
 JSON 对象必须包含以下两个字段：
-- "next_agent": 对应上面的选项值，必须是 "research", "modify", 或 "chat" 之一。
+- "next_agent": 必须是 "research_consult", "research_modify", "modify", 或 "chat" 之一。
 - "reasoning": 简要说明做出该判断的理由。
-
-### 输出示例
-{{
-    "next_agent": "modify",
-    "reasoning": "用户明确请求润色简历中的工作经历部分，不涉及外部JD。"
-}}
 """
 
+# ================= 2. AGENT PROMPT (核心修改：增加参考信息逻辑) =================
 AGENT_SYSTEM_PROMPT = """
 你是一个专业的简历优化助手和数据处理 Agent。
 
 ### 任务目标
 1. 分析用户的指令。
-2. 参考提供的上下文内容。
-3. 判断用户意图是 "修改内容" (modify) 还是 "普通闲聊/提问" (chat)。
-4. 如果是 "modify"，请根据用户指令修改内容，并**必须将其转换为标准的 Quill Delta 格式**输出。
+2. 参考提供的上下文内容 (简历原始数据)。
+3. **结合提供的参考信息 (如JD、行业调研数据) 进行针对性优化**。
+4. 将修改后的内容转换为标准的 Quill Delta 格式输出。
+
+### 输入数据说明
+- 用户指令: {user_prompt}
+- 参考信息 (外部知识): {reference_info}
+- 上下文内容 (简历原件): {context_json}
+
+### 处理逻辑
+- **如果有参考信息**：请提取其中的关键词、技能要求或风格，对简历内容进行润色或重写，使其更匹配参考信息。
+- **如果没有参考信息**：则仅根据用户指令进行常规修改。
 
 ### ⚠️ 内容保持与格式约束 (重要)
 1. **结构保持**：请尽量**保持原有的段落数量、换行结构**。
@@ -55,8 +64,8 @@ AGENT_SYSTEM_PROMPT = """
 ### 输出示例
 {{
     "intention": "modify",
-    "reply": "已为您优化描述。",
-    "modified_data": {{ "ops": [...] }}
+    "reply": "根据为您查找到的JD要求，已重点突出了并发编程经验。",
+    "modified_data": {{"ops": [...] }}
 }}
 
 ### 你的输出
@@ -81,104 +90,73 @@ REVIEW_SYSTEM_PROMPT = """
     "cons": ["不足1", "不足2"],
     "suggestions": ["修改建议1", "建议2"]
 }}
-
-### 注意事项
-1. score 请打 0-100 的整数。
-2. pros, cons, suggestions 必须是字符串数组。
-3. 请只输出一个合法的 JSON 对象，不要包含 Markdown 标记。
 """
 
 CHAT_SYSTEM_PROMPT = """
 你是一个热情、专业且富有同理心的 AI 简历助手。
 你的主要职责是帮助用户修改简历、进行简历诊断和提供职业建议。
-
-### 你的任务
-1. 回答用户的日常问候（如“你好”、“你是谁”）。
-2. 解答关于你能力的问题（如“你能做什么”、“怎么帮我改简历”）。
-3. 如果用户问了通用的求职问题，给出简短专业的建议。
-4. 保持语气轻松愉快，鼓励用户开始优化简历。
-
-### 输出格式
-请务必直接输出一个合法的 JSON 对象，不要包含 Markdown 标记。
-JSON 对象必须包含以下字段：
-- "reply": 你的回复内容（字符串）。
-
-### 输出示例
-{{
-    "intention": "chat",
-    "reply": "你好呀！我是你的智能简历助手。我可以帮你润色简历措辞，或者对简历进行全方位的诊断。你可以直接把简历内容发给我哦！",
-    "modified_data": {{ "ops": [...] }}
-}}
+请输出 JSON 格式，包含 "reply" 字段。
 """
 
 # ================= SERVICE CLASS =================
 
 class LLMService:
     def __init__(self):
-        # 初始化 LLM
         self.llm = ChatTongyi(
             model="qwen-flash",
             dashscope_api_key=settings.DASHSCOPE_API_KEY,
-            temperature=0.1,  # 低温度保证格式稳定
+            temperature=0.1,
         )
         self.parser = JsonOutputParser()
         self._init_chains()
 
     def _init_chains(self):
-        # 1. Init supervisor Agent Chain
+        # 1. Supervisor Chain
         supervisor_prompt = ChatPromptTemplate.from_messages([
             ("system", SUPERVISOR_SYSTEM_PROMPT),
             ("user", "{input}")
         ])
         self.supervisor_chain = supervisor_prompt | self.llm | self.parser
 
-        # 2. Init Modify Agent Chain
+        # 2. Modify Agent Chain (核心修改：模版增加 reference_info)
         agent_prompt = ChatPromptTemplate.from_messages([
             ("system", AGENT_SYSTEM_PROMPT),
-            ("user", "用户的指令：{user_prompt}\n上下文内容：{context_json}")
+            ("user", "用户的指令：{user_prompt}\n参考信息：{reference_info}\n上下文内容：{context_json}")
         ])
         self.agent_chain = agent_prompt | self.llm | self.parser
 
-        # 3. Init Review Agent Chain
+        # 3. Review Agent Chain
         review_prompt = ChatPromptTemplate.from_messages([
             ("system", REVIEW_SYSTEM_PROMPT),
             ("user", "请诊断以下简历内容：\n{resume_content}")
         ])
         self.review_chain = review_prompt | self.llm | self.parser
 
-        # === 4. Init Chat Agent Chain ===
+        # 4. Chat Agent Chain
         chat_prompt = ChatPromptTemplate.from_messages([
             ("system", CHAT_SYSTEM_PROMPT),
             ("user", "{user_input}")
         ])
         self.chat_chain = chat_prompt | self.llm | self.parser
 
-        #  大脑调用方法
+    # === Methods ===
+
     async def process_supervisor_request(self, prompt: str):
-        """调用总控大脑进行路由"""
-        # 使用 ainvoke 进行异步调用
-        return await self.supervisor_chain.ainvoke({
-            "input": prompt
-        })
-    
-    def process_chat_request(self, prompt: str):
-        """调用闲聊 Agent"""
-        return self.chat_chain.invoke({
-            "user_input": prompt
-        })
+        return await self.supervisor_chain.ainvoke({"input": prompt})
 
-    def process_agent_request(self, prompt: str, context: str):
+    async def process_chat_request(self, prompt: str):
+        return await self.chat_chain.ainvoke({"user_input": prompt})
+
+    async def process_review_request(self, resume_content: str):
+        return await self.review_chain.ainvoke({"resume_content": resume_content})
+
+    # [核心修改]：改为 async，增加 reference_info 参数
+    async def process_agent_request(self, prompt: str, context: str, reference_info: str = "无"):
         """调用修改 Agent"""
-        return self.agent_chain.invoke({
+        return await self.agent_chain.ainvoke({
             "user_prompt": prompt,
-            "context_json": context
+            "context_json": context,
+            "reference_info": reference_info  # 将搜索结果传入 Prompt
         })
 
-    def process_review_request(self, resume_content: str):
-        """调用诊断 Agent"""
-        return self.review_chain.invoke({
-            "resume_content": resume_content
-        })
-
-# 单例模式导出
 llm_service = LLMService()

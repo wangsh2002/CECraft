@@ -173,8 +173,15 @@ def connect_milvus(host: str, port: str):
 
 
 def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') -> Collection:
-    # 阿里云 v3 模型通常使用 COSINE 相似度效果较好，也可以用 L2
-    
+    """
+    确保 Milvus 集合存在，若不存在则创建
+    Args:
+        collection_name (str): 集合名称
+        dim (int): 向量维度
+        metric (str): 向量相似度度量方式，默认 COSINE
+    Returns:
+        Collection: Milvus 集合对象
+    """
     # =========== 检查集合是否存在 ==========
     if utility.has_collection(collection_name):
         coll = Collection(collection_name)
@@ -198,15 +205,16 @@ def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') ->
     # 创建集合
     coll = Collection(name=collection_name, schema=schema)
     
-    # 创建索引
+    # ========== 创建索引 =========
     index_params = {
         'index_type': 'IVF_FLAT',
         'metric_type': metric,
-        'params': {'nlist': 128}
+        'params': {'nlist': 128} # 聚类簇数
     }
+    # 对向量字段创建索引
     coll.create_index(field_name='embedding', index_params=index_params)
+    
     coll.load()
-    print(f"[DEBUG] ensure_collection: created and loaded collection {collection_name}")
     return coll
 
 
@@ -289,7 +297,7 @@ def ingest_directory(
             # 检查维度一致性
             for emb in embeddings:
                 if len(emb) != first_dim:
-                    raise RuntimeError(f"嵌入维度不一致: 期望 {first_dim}, 实际 {len(emb)}")
+                    raise ValueError(f"嵌入维度不一致: 期望 {first_dim}, 实际 {len(emb)}")
 
             # 构建元数据
             for idx, emb in enumerate(embeddings):
