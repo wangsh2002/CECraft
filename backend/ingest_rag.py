@@ -305,7 +305,7 @@ def ingest_directory(
                 meta = json.dumps({
                     'source': path,
                     'chunk_index': chunk_idx,
-                    'text_snippet': chunks[chunk_idx][:200]
+                    'text_snippet': chunks[chunk_idx][:200] # 文本摘要
                 }, ensure_ascii=False)
                 embeddings_for_file.append(emb)
                 metadatas_for_file.append(meta)

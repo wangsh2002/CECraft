@@ -27,7 +27,7 @@ SUPERVISOR_SYSTEM_PROMPT = """
     - 适用场景：问候、功能询问、通用建议，不涉及具体的搜索或修改动作。
 
 ### 输出格式
-请务必直接输出一个合法的 JSON 对象，不要包含 Markdown 标记。
+请务必直接输出一个合法的 JSON 对象。
 JSON 对象必须包含以下两个字段：
 - "next_agent": 必须是 "research_consult", "research_modify", "modify", 或 "chat" 之一。
 - "reasoning": 简要说明做出该判断的理由。
