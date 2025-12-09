@@ -53,7 +53,8 @@ async def execute_agent_workflow(request: ChatRequest):
             except Exception:
                 search_summary = "无法获取外部信息"
             
-            final_reply = f"{reason}\n\n---\n**为您找到的调研信息：**\n{search_summary}"
+            # 优化：直接返回搜索结果，不再拼接 Supervisor 的推理过程
+            final_reply = f"**为您找到的调研信息：**\n{search_summary}"
             
             return AgentResponse(
                 intention="research", # 前端可以用这个标记来决定是否显示"应用修改"按钮
@@ -83,9 +84,9 @@ async def execute_agent_workflow(request: ChatRequest):
             )
 
             # 3. 组装复合回复
+            # 优化：直接返回 Agent 的回复，不再拼接 Supervisor 的推理过程
             final_reply = (
                 f"**参考依据：** 已参考相关职位/行业数据。\n"
-                f"{reason}\n"
                 f"---\n{agent_result.get('reply')}"
             )
 

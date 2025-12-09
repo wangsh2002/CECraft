@@ -184,9 +184,9 @@ def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') ->
     """
     # =========== 检查集合是否存在 ==========
     if utility.has_collection(collection_name):
-        coll = Collection(collection_name)
+        coll = Collection(collection_name) # 加载已有的集合
         # 检查现有集合的维度
-        field = [f for f in coll.schema.fields if f.dtype == DataType.FloatVector]
+        field = [f for f in coll.schema.fields if f.dtype == DataType.FLOAT_VECTOR]
         if field and field[0].params.get('dim') == dim:
             return coll
         else:
@@ -214,19 +214,7 @@ def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') ->
     # 对向量字段创建索引
     coll.create_index(field_name='embedding', index_params=index_params)
     
-    coll.load()
     return coll
-
-
-def insert_embeddings(collection: Collection, embeddings: List[List[float]], metadatas: List[str]):
-    # Milvus expects columnar data: [[metadatas], [embeddings]] with pk auto
-    entities = [embeddings, metadatas]
-    # field order must match schema: pk auto -> skip, embedding, metadata
-    # Using insert with field names: provide data as dict mapping field name -> list
-    print(f"[DEBUG] insert_embeddings: inserting {len(embeddings)} vectors")
-    res = collection.insert([embeddings, metadatas])
-    print(f"[DEBUG] insert_embeddings: insert finished")
-    return res
 
 
 # --- main ingest pipeline ---
@@ -315,17 +303,13 @@ def ingest_directory(
         for j in range(0, len(embeddings_for_file), INSERT_BATCH):
             sub_emb = embeddings_for_file[j:j+INSERT_BATCH]
             sub_meta = metadatas_for_file[j:j+INSERT_BATCH]
-            # Milvus expects list of embeddings and list of metadata (in column order matching schema fields after pk)
-            print(f"[DEBUG] ingest_directory: inserting batch {j}..{j+len(sub_emb)}")
             collection.insert([sub_emb, sub_meta])
             total_inserted += len(sub_emb)
-        # make sure collection loaded
-        collection.load()
+        
         print(f"已插入: {path} -> {len(embeddings_for_file)} vectors")
 
-    # flush and report
+    # 刷新数据
     if collection:
-        print(f"[DEBUG] ingest_directory: flushing collection {collection_name}")
         collection.flush()
     print(f"全部完成，插入向量总数: {total_inserted}")
 
