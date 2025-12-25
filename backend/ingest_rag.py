@@ -168,8 +168,7 @@ def connect_milvus(host: str, port: str):
         print("connected to Milvus")
         
     except Exception as e:
-        print(f"Failed to connect to Milvus: {e}")
-        raise
+        raise RuntimeError(f"无法连接到 Milvus: {e}")
 
 
 def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') -> Collection:
@@ -190,7 +189,7 @@ def ensure_collection(collection_name: str, dim: int, metric: str = 'COSINE') ->
         if field and field[0].params.get('dim') == dim:
             return coll
         else:
-            raise ValueError(f"Collection {collection_name} exists but dimension mismatch")
+            raise RuntimeError(f"Collection {collection_name} exists but dimension mismatch")
 
     # ========== 创建新集合 ==========
     # 定义Schema
@@ -285,7 +284,7 @@ def ingest_directory(
             # 检查维度一致性
             for emb in embeddings:
                 if len(emb) != first_dim:
-                    raise ValueError(f"嵌入维度不一致: 期望 {first_dim}, 实际 {len(emb)}")
+                    raise RuntimeError(f"嵌入维度不一致: 期望 {first_dim}, 实际 {len(emb)}")
 
             # 构建元数据
             for idx, emb in enumerate(embeddings):

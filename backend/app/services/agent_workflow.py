@@ -99,6 +99,31 @@ CHAT_SYSTEM_PROMPT = """
 请输出 JSON 格式，包含 "reply" 字段。
 """
 
+EVALUATION_SYSTEM_PROMPT = """
+你是一个严格的**回复质量评估专家 (Quality Assurance Auditor)**。
+你的任务是评估前面的 Agent 生成的回复是否满足了用户的原始需求。
+
+### 评估标准
+1. **意图一致性**：回复内容是否直接响应了用户的指令？
+2. **完整性**：如果用户问了两个问题，Agent 是否都回答了？
+3. **准确性**：如果有参考信息 (Reference Info)，Agent 的回复是否与参考信息冲突？
+4. **格式合规**：生成的 JSON 数据 (modified_data) 是否存在明显的逻辑错误？
+
+### 输入信息
+- 用户原始指令 (User Prompt)
+- 参考信息 (Reference Info)
+- Agent 生成的回复 (Agent Reply)
+
+### 输出格式 (严格 JSON)
+请输出且仅输出一个 JSON 对象，包含以下字段：
+{{
+    "is_pass": true/false,   // 整体评估是否通过（60分以上为 true）
+    "score": 85,             // 0-100 的评分
+    "missing_points": [],    // 遗漏的用户需求点（数组，如果没有则为空）
+    "reason": "...",         // 简短的评分理由
+    "suggestion": "..."      // 如果不通过，给出的改进建议
+}}
+"""
 # ================= SERVICE CLASS =================
 
 class LLMService:
@@ -140,6 +165,25 @@ class LLMService:
         ])
         self.chat_chain = chat_prompt | self.llm | self.parser
 
+        # 5. Evaluation Chain (质检链)
+        eval_prompt = ChatPromptTemplate.from_messages([
+            ("system", EVALUATION_SYSTEM_PROMPT),
+            ("user", """
+            [用户原始指令]
+            {user_prompt}
+
+            [参考信息]
+            {reference_info}
+
+            [Agent 生成的回复]
+            {agent_reply}
+            
+            请开始评估：
+            """)
+        ])
+        # 管道：Prompt -> LLM -> JSON Parser
+        self.evaluation_chain = eval_prompt | self.llm | self.parser
+
     # === Methods ===
 
     async def process_supervisor_request(self, prompt: str):
@@ -159,5 +203,21 @@ class LLMService:
             "context_json": context,
             "reference_info": reference_info  # 将搜索结果传入 Prompt
         })
+    
+    # [接口] 执行评估
+    async def process_evaluation_request(self, user_prompt: str, agent_reply: str, reference_info: str = "无"):
+        """
+        返回结构化的评估结果 (JSON Dict)
+        """
+        try:
+            return await self.evaluation_chain.ainvoke({
+                "user_prompt": user_prompt,
+                "agent_reply": agent_reply,
+                "reference_info": reference_info
+            })
+        except Exception as e:
+            print(f"Evaluation Logic Error: {e}")
+            # 降级处理：如果评估崩了，默认通过，避免卡死流程
+            return {"is_pass": True, "score": 0, "reason": "评估服务异常", "missing_points": []}
 
 llm_service = LLMService()

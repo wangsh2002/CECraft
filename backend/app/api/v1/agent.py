@@ -39,86 +39,114 @@ async def execute_agent_workflow(request: ChatRequest):
         # === 1. Supervisor 决策 ===
         decision = await llm_service.process_supervisor_request(request.prompt)
         target_agent = decision.get("next_agent") 
-        reason = decision.get("reasoning")
-        
-        print(f"Workflow 决策: {target_agent} | 原因: {reason}")
-        
-        # === 2. 执行逻辑分流 ===
+        print(f"Workflow 决策: {target_agent}")
 
-        # --- 情况 A: 纯调研 (只回答，不改简历) ---
+        # === 初始化公共变量 ===
+        final_intention = "chat"
+        final_reply_text = ""
+        final_modified_data = None
+        
+        # 专门用于存储上下文信息的变量，后续会传给评估者和重试逻辑
+        # 默认包含 Context，如果进行了搜索，会追加搜索结果
+        current_reference_info = "无外部参考信息" 
+
+        # === 2. 初次执行 (First Pass) ===
+        
+        # [A] 纯调研
         if target_agent == "research_consult":
-            print(f"--- [Research Consult] 启动搜索 ---")
-            try:
-                search_summary = await perform_web_search(request.prompt)
-            except Exception:
-                search_summary = "无法获取外部信息"
+            final_intention = "research"
+            search_res = await perform_web_search(request.prompt)
+            current_reference_info = search_res
+            final_reply_text = f"**调研结果：**\n{search_res}"
+            # 注意：纯调研通常不涉及 modified_data，但在重试时我们可能希望 LLM 介入润色
             
-            # 优化：直接返回搜索结果，不再拼接 Supervisor 的推理过程
-            final_reply = f"**为您找到的调研信息：**\n{search_summary}"
-            
-            return AgentResponse(
-                intention="research", # 前端可以用这个标记来决定是否显示"应用修改"按钮
-                reply=final_reply,
-                modified_data=None # 关键：这里没有 ops 数据
-            )
-
-        # --- 情况 B: 调研 + 修改 (链式调用) ---
+        # [B] 调研 + 修改
         elif target_agent == "research_modify":
-            print(f"--- [Research & Modify] 启动搜索 + 修改 ---")
+            final_intention = "modify"
+            search_res = await perform_web_search(request.prompt)
+            current_reference_info = search_res # 搜索结果作为参考
             
-            # 1. 先搜索
-            try:
-                # 优化点：对于"根据JD修改"，我们可以把 Prompt 直接作为搜索词，或者让 LLM 提取搜索词
-                search_summary = await perform_web_search(request.prompt)
-            except Exception:
-                search_summary = "（网络搜索失败，将尝试仅根据通用知识修改）"
-            
-            print(f"--- 搜索完成，传入 Modify Agent ---")
-
-            # 2. 将搜索结果注入 Modify Agent
-            # 注意：调用我们在上一步修改过的支持 reference_info 的接口
             agent_result = await llm_service.process_agent_request(
-                prompt=request.prompt,        
-                context=request.context,      
-                reference_info=search_summary 
-            )
-
-            # 3. 组装复合回复
-            # 优化：直接返回 Agent 的回复，不再拼接 Supervisor 的推理过程
-            final_reply = (
-                f"**参考依据：** 已参考相关职位/行业数据。\n"
-                f"---\n{agent_result.get('reply')}"
-            )
-
-            return AgentResponse(
-                intention="modify", 
-                reply=final_reply,
-                modified_data=agent_result.get("modified_data") # 关键：返回修改数据
-            )
-
-        # --- 情况 C: 直接修改 (不搜索) ---
-        elif target_agent == "modify":
-            print("--- [Direct Modify] ---")
-            agent_result = await llm_service.process_agent_request(
-                prompt=request.prompt, 
+                prompt=request.prompt,
                 context=request.context,
-                reference_info="无" # 明确告知没有外部参考
+                reference_info=current_reference_info
+            )
+            final_reply_text = agent_result.get("reply")
+            final_modified_data = agent_result.get("modified_data")
+
+        # [C] 直接修改
+        elif target_agent == "modify":
+            final_intention = "modify"
+            current_reference_info = "无"
+            
+            agent_result = await llm_service.process_agent_request(
+                prompt=request.prompt,
+                context=request.context,
+                reference_info=current_reference_info
+            )
+            final_reply_text = agent_result.get("reply")
+            final_modified_data = agent_result.get("modified_data")
+
+        # [D] 闲聊 (通常不需要评估)
+        else:
+            chat_res = await llm_service.process_chat_request(request.prompt)
+            return AgentResponse(intention="chat", reply=chat_res.get("reply"))
+
+        # === 3. 质量评估 (Evaluation) ===
+        print("--- [Evaluation] 开始质检 ---")
+        eval_result = await llm_service.process_evaluation_request(
+            user_prompt=request.prompt,
+            agent_reply=final_reply_text,
+            reference_info=current_reference_info
+        )
+        
+        is_pass = eval_result.get("is_pass", True)
+        print(f"初次评估结果: {'✅ 通过' if is_pass else '❌ 未通过'} | 分数: {eval_result.get('score')}")
+
+        # === 4. 自愈重试 (Self-Correction Loop) ===
+        # 条件：评估未通过 且 意图是修改类 (modify/research_modify)
+        # (如果是 research_consult 纯搜索失败，通常是因为搜不到，LLM 重写也救不了，所以跳过)
+        if not is_pass and final_intention == "modify":
+            
+            print("--- [Retry] 触发自动修正逻辑 ---")
+            
+            # (1) 提取“专家意见”
+            suggestions = eval_result.get("suggestion", "请检查用户需求是否满足")
+            missing_points = ", ".join(eval_result.get("missing_points", []))
+            
+            # (2) 构造“加强版”参考信息
+            # 将原始参考信息 + 修正指令合并
+            retry_reference_info = f"""
+            {current_reference_info}
+            
+            =========================================
+            [⚠️ 系统强制修正指令 / CRITICAL FEEDBACK]
+            上一次生成的内容未通过质量审核。
+            遗漏点：{missing_points}
+            专家修改建议：{suggestions}
+            
+            请务必基于上述建议重新生成回答！
+            =========================================
+            """
+            
+            # (3) 重新调用 Agent
+            retry_result = await llm_service.process_agent_request(
+                prompt=request.prompt,
+                context=request.context,
+                reference_info=retry_reference_info # 注入了修正意见
             )
             
-            return AgentResponse(
-                intention="modify",
-                reply=agent_result.get("reply"),
-                modified_data=agent_result.get("modified_data")
-            )
+            # (4) 覆盖结果
+            print("--- [Retry] 修正完成，覆盖旧结果 ---")
+            final_reply_text = retry_result.get("reply")
+            final_modified_data = retry_result.get("modified_data")
 
-        # --- 情况 D: 闲聊 ---
-        else: # chat
-            chat_result = await llm_service.process_chat_request(request.prompt)
-            return AgentResponse(
-                intention="chat",
-                reply=chat_result.get("reply"),
-                modified_data=None
-            )
+        # === 5. 返回最终结果 ===
+        return AgentResponse(
+            intention=final_intention,
+            reply=final_reply_text,
+            modified_data=final_modified_data
+        )
 
     except Exception as e:
         import traceback

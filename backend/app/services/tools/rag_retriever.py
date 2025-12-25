@@ -26,10 +26,13 @@ def _call_embedding_api(texts: List[str], api_url: str, api_key: Optional[str]) 
     
     client = OpenAI(api_key=api_key, 
                     base_url=api_url)
+    
     resp = client.embeddings.create(model="text-embedding-v3", 
                                     input=texts, 
                                     encoding_format="float")
+    
     data_items = sorted(resp.data, key=lambda x: x.index)
+
     embeddings = [item.embedding for item in data_items]
 
     return embeddings
@@ -42,7 +45,10 @@ def _ensure_milvus_connection(host: str, port: str):
         host (str): Milvus主机地址。
         port (str): Milvus端口号。
     """
-    connections.connect(host=host, port=port)
+    try:
+        connections.connect(host=host, port=port)
+    except Exception as e:
+        raise RuntimeError(f"无法连接到Milvus: {e}")
 
 
 def _generate_answer_with_llm(query: str, context: str, api_url: str, api_key: Optional[str]) -> str:
@@ -108,7 +114,7 @@ def _generate_answer_with_llm(query: str, context: str, api_url: str, api_key: O
 
 def retrieve_resume_examples(query: str, topk: Optional[int] = 5) -> str:
     """
-    查询RAG向量数据库，返回与`query`最相似的top-k文本片段及其元数据。
+    查询RAG向量数据库，获取相关文本片段并生成回答
     Args:
         query (str): 查询文本。
         topk (Optional[int]): 返回的相似文本片段数量，默认为5
@@ -122,11 +128,12 @@ def retrieve_resume_examples(query: str, topk: Optional[int] = 5) -> str:
     collection_name = os.getenv("RAG_COLLECTION", "md_collection")
 
     if not api_url:
-        raise RuntimeError("DASHSCOPE_API_URL (embedding API URL) is not set")
+        raise RuntimeError("API URL is not set")
 
-    # 先创建 Milvus 连接，再检查集合是否存在
+    # 连接Mlivus
     _ensure_milvus_connection(milvus_host, milvus_port)
 
+    # 加载集合
     if not utility.has_collection(collection_name):
         raise RuntimeError(f"Milvus collection '{collection_name}' does not exist")
 
@@ -138,6 +145,7 @@ def retrieve_resume_examples(query: str, topk: Optional[int] = 5) -> str:
     if not embeddings:
         raise RuntimeError("Failed to obtain embedding for query")
     q_emb = embeddings[0]
+
 
     # 向量检索
     search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
