@@ -221,3 +221,56 @@ class LLMService:
             return {"is_pass": True, "score": 0, "reason": "评估服务异常", "missing_points": []}
 
 llm_service = LLMService()
+
+# ================= WORKFLOW ENTRY POINT =================
+
+async def run_agent_workflow(user_input: str, context: dict) -> dict:
+    """
+    执行 Agent 工作流：Supervisor -> (RAG) -> Agent
+    """
+    import json
+    import asyncio
+    from app.services.tools.rag_retriever import search_and_rerank
+
+    # 1. 意图识别
+    supervisor_result = await llm_service.process_supervisor_request(user_input)
+    intent = supervisor_result.get("next_agent", "chat")
+    
+    reference_info = "无"
+    
+    # 2. 如果需要调研，执行 RAG
+    if intent in ["research_consult", "research_modify"]:
+        try:
+            docs = await asyncio.to_thread(search_and_rerank, user_input)
+            reference_info = "\n".join([doc.get('text', '') for doc in docs])
+        except Exception as e:
+            print(f"RAG Error: {e}")
+    
+    result = {}
+    
+    # 3. 路由执行
+    if intent in ["modify", "research_modify"]:
+        context_str = json.dumps(context, ensure_ascii=False)
+        agent_res = await llm_service.process_agent_request(user_input, context_str, reference_info)
+        result = agent_res
+        # 统一输出格式供 Benchmark 使用
+        if "modified_data" in agent_res:
+            result["content"] = agent_res["modified_data"]
+        else:
+            result["content"] = agent_res.get("reply", "")
+            
+    elif intent in ["chat", "research_consult"]:
+        # 对于咨询类，我们其实应该把 reference_info 喂给 chat agent
+        # 但目前的 chat_chain 很简单。为了演示效果，我们简单处理。
+        # 如果是 research_consult，我们构造一个带 context 的 prompt
+        if intent == "research_consult":
+            prompt_with_context = f"用户问题: {user_input}\n参考资料: {reference_info}\n请根据参考资料回答。"
+            chat_res = await llm_service.process_chat_request(prompt_with_context)
+        else:
+            chat_res = await llm_service.process_chat_request(user_input)
+            
+        result = chat_res
+        result["content"] = chat_res.get("reply", "")
+
+    result["intent"] = intent
+    return result

@@ -179,6 +179,9 @@ def call_embedding_api(texts: List[str], api_url: str, api_key: Optional[str] = 
     # 预处理，去除换行符，有助于 embedding 质量
     texts = [t.replace("\n", " ") for t in texts]
     
+    all_embeddings = []
+    BATCH_SIZE = 10  # 阿里云限制单次请求最大 10 条
+
     try:
         # 初始化 OpenAI 客户端 (用于连接阿里云兼容接口)
         client = OpenAI(
@@ -186,19 +189,22 @@ def call_embedding_api(texts: List[str], api_url: str, api_key: Optional[str] = 
             base_url=api_url
         )
 
-        # 调用接口
-        resp = client.embeddings.create(
-            model="text-embedding-v3", 
-            input=texts,
-            encoding_format="float"
-        )
+        for i in range(0, len(texts), BATCH_SIZE):
+            batch_texts = texts[i : i + BATCH_SIZE]
+            
+            # 调用接口
+            resp = client.embeddings.create(
+                model="text-embedding-v3", 
+                input=batch_texts,
+                encoding_format="float"
+            )
+            
+            # 提取向量
+            data_items = sorted(resp.data, key=lambda x: x.index)
+            batch_embeddings = [item.embedding for item in data_items]
+            all_embeddings.extend(batch_embeddings)
         
-        # 提取向量
-        # OpenAI SDK 返回的是对象，按 index 排序确保顺序一致
-        data_items = sorted(resp.data, key=lambda x: x.index)
-        embeddings = [item.embedding for item in data_items]
-        
-        return embeddings
+        return all_embeddings
 
     except Exception as e:
         raise RuntimeError(f"阿里云 Embedding 调用失败: {e}")

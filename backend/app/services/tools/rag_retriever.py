@@ -186,6 +186,7 @@ def _rerank_documents(query: str, docs: List[Dict[str, Any]], top_n: int) -> Lis
         return docs[:top_n]
 
     try:
+        dashscope.api_key = api_key
         # 提取文本列表
         doc_texts = [d.get("text", "") or d.get("text_snippet", "") for d in docs]
         
