@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException
+import asyncio
 from app.schemas.agent import ChatRequest, AgentResponse, ReviewRequest, ReviewResponse
 from app.services.agent_workflow import llm_service
 # [新增] 导入我们刚才测试通过的联网搜索工具
 from app.services.tools.web_search import perform_web_search
+from app.services.tools.rag_retriever import retrieve_resume_examples
 
 router = APIRouter()
 
@@ -55,16 +57,42 @@ async def execute_agent_workflow(request: ChatRequest):
         # [A] 纯调研
         if target_agent == "research_consult":
             final_intention = "research"
-            search_res = await perform_web_search(request.prompt)
-            current_reference_info = search_res
-            final_reply_text = f"**调研结果：**\n{search_res}"
+            
+            # 并行执行 Web 搜索和 RAG 检索
+            web_task = asyncio.create_task(perform_web_search(request.prompt))
+            rag_task = asyncio.to_thread(retrieve_resume_examples, request.prompt)
+            
+            web_res, rag_res = await asyncio.gather(web_task, rag_task, return_exceptions=True)
+            
+            # 处理可能的异常
+            if isinstance(web_res, Exception):
+                web_res = f"Web Search Error: {str(web_res)}"
+            if isinstance(rag_res, Exception):
+                rag_res = f"RAG Search Error: {str(rag_res)}"
+
+            combined_res = f"**Web Search Result:**\n{web_res}\n\n**RAG Search Result:**\n{rag_res}"
+            current_reference_info = combined_res
+            final_reply_text = f"**调研结果：**\n{combined_res}"
             # 注意：纯调研通常不涉及 modified_data，但在重试时我们可能希望 LLM 介入润色
             
         # [B] 调研 + 修改
         elif target_agent == "research_modify":
             final_intention = "modify"
-            search_res = await perform_web_search(request.prompt)
-            current_reference_info = search_res # 搜索结果作为参考
+            
+            # 并行执行 Web 搜索和 RAG 检索
+            web_task = asyncio.create_task(perform_web_search(request.prompt))
+            rag_task = asyncio.to_thread(retrieve_resume_examples, request.prompt)
+            
+            web_res, rag_res = await asyncio.gather(web_task, rag_task, return_exceptions=True)
+            
+            # 处理可能的异常
+            if isinstance(web_res, Exception):
+                web_res = f"Web Search Error: {str(web_res)}"
+            if isinstance(rag_res, Exception):
+                rag_res = f"RAG Search Error: {str(rag_res)}"
+
+            combined_res = f"**Web Search Result:**\n{web_res}\n\n**RAG Search Result:**\n{rag_res}"
+            current_reference_info = combined_res # 搜索结果作为参考
             
             agent_result = await llm_service.process_agent_request(
                 prompt=request.prompt,

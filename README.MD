@@ -1,32 +1,145 @@
-# CanvasEditor
+# CECraft - 智能简历优化系统
 
-<p>
-<a href="https://github.com/WindrunnerMax/CanvasEditor">GitHub</a>
-<span>｜</span>
-<a href="https://windrunnermax.github.io/CanvasEditor/">DEMO</a>
-<span>｜</span>
-<a href="https://github.com/WindrunnerMax/CanvasEditor/issues/2">BLOG</a>
-<span>｜</span>
-<a href="./NOTE.md">NOTE</a>
-<span>｜</span>
-<a href="./TODO.md">TODO</a>
-</p>
+CECraft 是一个集成了 AI 智能体的现代化简历编辑器。它结合了强大的富文本编辑能力（Frontend）和基于大语言模型的智能代理（Backend），能够帮助用户调研岗位要求、咨询简历建议，并自动优化和润色简历内容。
 
-基于`Canvas`实现的的简历编辑器，从零设计编辑器框架，并实现绘制模块的插件化。
+## 核心功能
 
-```bash
-npm install -g pnpm@8.11.0
-pnpm install
-npm run dev:react
+*   **智能简历诊断与优化**：
+    *   **调研咨询 (Research Consult)**：查询薪资范围、面试题、公司背景等外部信息。
+    *   **调研修改 (Research Modify)**：根据搜索到的岗位 JD 或行业标准，针对性地优化简历技能和经历。
+    *   **直接修改 (Modify)**：对简历内容进行润色、精简、翻译或纠错。
+    *   **闲聊 (Chat)**：提供通用的简历建议和指导。
+*   **专业级富文本编辑器**：
+    *   基于 Canvas 的高性能渲染引擎。
+    *   支持富文本数据结构 (Delta)。
+    *   模块化插件系统。
+*   **RAG (检索增强生成)**：
+    *   内置爬虫抓取热门岗位 JD 和简历范文。
+    *   基于 Milvus 的向量检索，提供更精准的行业参考。
+
+## 模块说明
+
+### Backend (后端)
+
+后端基于 **FastAPI** 和 **LangChain** 构建，负责处理 AI 逻辑、数据检索和 API 服务。
+
+*   **Agent Workflow**: 采用 Supervisor 架构，将用户意图分类为 `research_consult`, `research_modify`, `modify`, `chat` 四类，并调度相应的工具。
+*   **RAG System**: 使用 Milvus 作为向量数据库，存储爬取的行业数据，为 Agent 提供上下文支持。
+*   **Tools**: 集成了 Web Search (联网搜索) 和 RAG Retriever (本地知识库检索) 工具。
+
+### Frontend (前端)
+
+前端采用 **React** + **Rspack** 的 Monorepo 架构，核心是一个自研的富文本/图形编辑器引擎。
+
+*   **Core**: 编辑器的核心引擎，处理画布渲染、事件分发、历史记录管理等。
+*   **Delta**: 定义了文档的数据结构，用于描述富文本内容。
+*   **Plugin**: 插件系统，允许扩展编辑器功能。
+*   **React**: UI 层，使用 Arco Design 组件库，提供用户交互界面。
+
+## 项目结构与文件说明
+
+```text
+CECraft/
+├── README.MD                   # 项目说明文档
+├── run.sh                      # 一键启动脚本 (同时启动前后端)
+├── technical_report.md         # 技术报告
+├── backend/                    # 后端代码目录
+│   ├── main.py                 # FastAPI 应用入口
+│   ├── crawl_docs.py           # 数据爬虫脚本，用于抓取简历范文和岗位 JD
+│   ├── ingest_rag.py           # RAG 数据入库脚本，将 Markdown 文档存入 Milvus
+│   ├── docker-compose.yml      # 基础设施编排 (Milvus, MinIO, Etcd)
+│   ├── requirements.txt        # Python 依赖列表
+│   ├── app/
+│   │   ├── api/
+│   │   │   └── v1/
+│   │   │       └── agent.py    # Agent 相关 API 路由
+│   │   ├── core/
+│   │   │   └── config.py       # 项目配置 (环境变量等)
+│   │   ├── schemas/
+│   │   │   └── agent.py        # Pydantic 数据模型定义
+│   │   └── services/
+│   │       ├── agent_workflow.py # LangChain Agent 核心工作流逻辑 (Supervisor & Tools)
+│   │       └── tools/
+│   │           ├── rag_retriever.py # RAG 检索工具
+│   │           └── web_search.py    # 联网搜索工具
+│   ├── data/                   # 数据存储目录
+│   │   ├── STAR法则.md          # 内置参考文档
+│   │   └── resumes_crawled/    # 爬虫抓取的简历和 JD 数据
+│   ├── tests/                  # 测试代码
+│   └── volumes/                # Docker 挂载卷 (Milvus 数据持久化)
+└── frontend/                   # 前端代码目录 (Monorepo)
+    ├── package.json            # 根依赖配置
+    ├── pnpm-workspace.yaml     # pnpm workspace 配置
+    ├── packages/
+    │   ├── core/               # 编辑器核心引擎包
+    │   │   └── src/
+    │   │       ├── canvas/     # 画布渲染逻辑
+    │   │       ├── editor/     # 编辑器主控逻辑
+    │   │       ├── event/      # 事件系统
+    │   │       └── history/    # 撤销/重做历史记录
+    │   ├── delta/              # 数据结构包 (类似 Quill Delta)
+    │   ├── plugin/             # 编辑器插件系统
+    │   ├── react/              # React UI 应用包 (主应用)
+    │   │   ├── rspack.config.js # Rspack 构建配置
+    │   │   └── src/            # 前端页面源码
+    │   └── utils/              # 通用工具函数包
+    └── ...
 ```
 
-## FAQ
+## 快速开始
 
-为什么要自行实现一个简历编辑器：
+### 环境要求
 
-- 固定模板不好用，各种模板用起来细节上并不是很满意，要么是模块的位置固定，要么是页面边距不满意。而通过`Canvas`实现的简历编辑器都是图形，完全依靠画布绘制图形，在给定的基础图形上可以任意绘制，不会有排版问题。
+*   Node.js & pnpm
+*   Python 3.10+
+*   Docker & Docker Compose (用于运行 Milvus)
 
-- 数据安全不能保证，因为简历上通常会存在很多个人信息，例如电话、邮箱等等。这些简历网站通常都需要登录才能用，数据都存在服务端，虽然泄漏的可能性不大，但是保护隐私还是很重要的。此编辑器是纯前端项目，数据全部存储在本地，没有任何服务器上传行为，可以完全保证数据安全。
+### 1. 启动基础设施
 
-- 维持一页简历不易，之前使用某简历模板网站时，某一项写的字较多时导出就会出现多页的情况，而我们大家大概都听说过简历最好是一页。因此在实现此编辑器时是直接通过排版的方式生成`PDF`，所以在设置页面大小后，导出的`PDF`总会是保持一页，看起来会更美观。
+首先启动向量数据库 Milvus 和对象存储 MinIO：
 
+```bash
+cd backend
+docker-compose up -d
+```
+
+### 2. 数据准备 (可选)
+
+如果你需要使用 RAG 功能，可以先爬取数据并入库：
+
+```bash
+# 爬取数据
+python crawl_docs.py
+
+# 数据入库 (需确保 Docker 服务已启动)
+python ingest_rag.py --source ./data/resumes_crawled --collection docs_md
+```
+
+### 3. 启动服务
+
+你可以使用根目录下的脚本同时启动前后端：
+
+```bash
+./run.sh
+```
+
+或者分别启动：
+
+**Backend:**
+
+```bash
+cd backend
+pip install -r requirements.txt
+python main.py
+```
+
+**Frontend:**
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+访问前端地址通常为: `http://localhost:8080` (具体视控制台输出而定)。
+API 文档地址: `http://localhost:8000/docs`。
