@@ -13,9 +13,14 @@ CECraft 是一个集成了 AI 智能体的现代化简历编辑器。它结合�
     *   基于 Canvas 的高性能渲染引擎。
     *   支持富文本数据结构 (Delta)。
     *   模块化插件系统。
-*   **RAG (检索增强生成)**：
-    *   内置爬虫抓取热门岗位 JD 和简历范文。
-    *   基于 Milvus 的向量检索，提供更精准的行业参考。
+*   **RAG (检索增强生成) - 深度优化版**：
+    *   **Two-stage Retrieval (两阶段检索)**：
+        *   **Query Expansion (查询扩展)**：利用 LLM 生成多路子查询，提升召回覆盖率 (Recall)。
+        *   **Rerank (重排序)**：引入 Cross-Encoder 模型对向量召回结果进行精排，大幅提升 Top-K 准确率。
+    *   **Advanced Indexing (高级索引策略)**：
+        *   **Structure-aware Chunking (结构化切分)**：基于 Markdown AST 解析文档结构，确保知识片段的语义完整性。
+        *   **Parent-Child Indexing (父子索引)**：Small-to-Big 策略，检索细粒度子块，返回粗粒度父文档，兼顾检索精度与上下文完整性。
+    *   **Evaluation (自动化评估)**：内置 RAG 评估流水线，量化 Context Recall 和 Answer Faithfulness 指标。
 
 ## 模块说明
 

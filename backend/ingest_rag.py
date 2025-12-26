@@ -13,7 +13,7 @@ import requests
 from tqdm import tqdm
 from dotenv import load_dotenv
 from unstructured.partition.auto import partition
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 
 from pymilvus import (
     connections,
@@ -109,6 +109,59 @@ def chunk_text(text: str, max_chars: int = 1000, overlap: int = 200) -> List[str
     chunks = splitter.split_text(text)
     print(f"chunk_text: produced {len(chunks)} chunks")
     return chunks
+
+
+def process_markdown_parent_child(text: str, chunk_size: int = 500, overlap: int = 100) -> List[Dict[str, Any]]:
+    """
+    结合 Markdown 结构化切分 (Opt 1) 和 父子索引 (Opt 2)
+    1. 先按 Header 切分出语义完整的 Parent Chunks (Sections)
+    2. 再将 Parent Chunks 切分为更小的 Child Chunks 用于向量计算
+    3. 返回的数据中，embedding 基于 child，但 metadata 包含 parent text
+    """
+    headers_to_split_on = [
+        ("#", "h1"),
+        ("##", "h2"),
+        ("###", "h3"),
+    ]
+    
+    # 1. 结构化切分 (Parent Level)
+    # strip_headers=False 保留标题在文本中，有助于上下文理解
+    markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
+    parent_docs = markdown_splitter.split_text(text)
+    
+    results = []
+    
+    # 2. 细粒度切分 (Child Level)
+    child_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+        separators=["\n\n", "\n", " ", ""]
+    )
+    
+    for parent_doc in parent_docs:
+        parent_text = parent_doc.page_content
+        parent_meta = parent_doc.metadata # e.g. {'h1': '...', 'h2': '...'}
+        
+        # 如果父块本身就很小，直接作为一个单元
+        if len(parent_text) <= chunk_size:
+            results.append({
+                "child_text": parent_text,
+                "parent_text": parent_text,
+                "metadata": parent_meta
+            })
+            continue
+            
+        # 否则切分为子块
+        child_chunks = child_splitter.split_text(parent_text)
+        for child_text in child_chunks:
+            results.append({
+                "child_text": child_text,
+                "parent_text": parent_text, # Small-to-Big: 检索子块，返回父块
+                "metadata": parent_meta
+            })
+            
+    print(f"process_markdown_parent_child: generated {len(results)} child chunks from {len(parent_docs)} parent sections")
+    return results
 
 
 # --- embedding API wrapper ---
@@ -258,21 +311,33 @@ def ingest_directory(
     collection = None
 
     for path in tqdm(files, desc="Ingesting markdown files"):
-        # 读取并切分文本
-        text = read_markdown(path)
-        chunks = chunk_text(text, max_chars=chunk_size, overlap=overlap)
-        if not chunks:
+        # 读取原始内容 (为了保留 Markdown 结构)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                raw_text = f.read()
+        except Exception as e:
+            print(f"Error reading {path}: {e}")
+            continue
+
+        # 使用新的处理逻辑 (Structure-aware + Parent-Child)
+        # chunk_size 设小一点用于检索 (e.g. 400)，parent 则是完整的 section
+        # 这里我们复用传入的 chunk_size 作为 child size
+        processed_chunks = process_markdown_parent_child(raw_text, chunk_size=chunk_size, overlap=overlap)
+        
+        if not processed_chunks:
             continue
         
         # 调用嵌入 API，分批处理
         BATCH = 16
         embeddings_for_file = []
         metadatas_for_file = []
-        for i in range(0, len(chunks), BATCH):
-            batch_texts = chunks[i:i+BATCH]
+        
+        for i in range(0, len(processed_chunks), BATCH):
+            batch_items = processed_chunks[i:i+BATCH]
+            batch_child_texts = [item["child_text"] for item in batch_items]
 
-            # 调用嵌入 API
-            embeddings = call_embedding_api(batch_texts, api_url=api_url, api_key=api_key)
+            # 调用嵌入 API (基于 Child Text)
+            embeddings = call_embedding_api(batch_child_texts, api_url=api_url, api_key=api_key)
             if not embeddings:
                 raise RuntimeError("嵌入 API 未返回向量")
             
@@ -289,11 +354,18 @@ def ingest_directory(
             # 构建元数据
             for idx, emb in enumerate(embeddings):
                 chunk_idx = i + idx
-                meta = json.dumps({
+                item = batch_items[idx]
+                
+                meta_obj = {
                     'source': path,
                     'chunk_index': chunk_idx,
-                    'text_snippet': chunks[chunk_idx][:200] # 文本摘要
-                }, ensure_ascii=False)
+                    'text': item['parent_text'],       # 核心：LLM 看到的是 Parent Text (Small-to-Big)
+                    'child_text': item['child_text'],  # 保留 Child Text 用于调试或精确匹配
+                    'text_snippet': item['child_text'][:200], # 兼容旧逻辑
+                    'headers': item['metadata']        # 结构信息 (Header Splitting)
+                }
+                
+                meta = json.dumps(meta_obj, ensure_ascii=False)
                 embeddings_for_file.append(emb)
                 metadatas_for_file.append(meta)
 
