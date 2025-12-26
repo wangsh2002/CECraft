@@ -39,7 +39,7 @@ async def ai_review_process(request: ReviewRequest):
 async def execute_agent_workflow(request: ChatRequest):
     try:
         # === 1. Supervisor 决策 ===
-        decision = await llm_service.process_supervisor_request(request.prompt)
+        decision = await llm_service.process_supervisor_request(request.prompt, request.history)
         target_agent = decision.get("next_agent") 
         print(f"Workflow 决策: {target_agent}")
 
@@ -97,7 +97,8 @@ async def execute_agent_workflow(request: ChatRequest):
             agent_result = await llm_service.process_agent_request(
                 prompt=request.prompt,
                 context=request.context,
-                reference_info=current_reference_info
+                reference_info=current_reference_info,
+                history=request.history
             )
             final_reply_text = agent_result.get("reply")
             final_modified_data = agent_result.get("modified_data")
@@ -110,14 +111,15 @@ async def execute_agent_workflow(request: ChatRequest):
             agent_result = await llm_service.process_agent_request(
                 prompt=request.prompt,
                 context=request.context,
-                reference_info=current_reference_info
+                reference_info=current_reference_info,
+                history=request.history
             )
             final_reply_text = agent_result.get("reply")
             final_modified_data = agent_result.get("modified_data")
 
         # [D] 闲聊 (通常不需要评估)
         else:
-            chat_res = await llm_service.process_chat_request(request.prompt)
+            chat_res = await llm_service.process_chat_request(request.prompt, request.history)
             return AgentResponse(intention="chat", reply=chat_res.get("reply"))
 
         # === 3. 质量评估 (Evaluation) ===
@@ -161,7 +163,8 @@ async def execute_agent_workflow(request: ChatRequest):
             retry_result = await llm_service.process_agent_request(
                 prompt=request.prompt,
                 context=request.context,
-                reference_info=retry_reference_info # 注入了修正意见
+                reference_info=retry_reference_info, # 注入了修正意见
+                history=request.history
             )
             
             # (4) 覆盖结果

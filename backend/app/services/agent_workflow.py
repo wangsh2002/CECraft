@@ -1,11 +1,25 @@
 from langchain_community.chat_models import ChatTongyi
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from app.core.config import settings
+
+# ================= 0. SUMMARY PROMPT (新增：摘要记忆) =================
+SUMMARY_SYSTEM_PROMPT = """
+你是一个专业的对话摘要助手。
+请将以下对话历史总结为一个简洁的摘要，保留关键信息（如用户的职业背景、技能、求职意向、已讨论的修改点）。
+摘要不需要包含寒暄内容，直接陈述事实。
+"""
 
 # ================= 1. SUPERVISOR PROMPT (核心修改：细分意图) =================
 SUPERVISOR_SYSTEM_PROMPT = """
 你是智能简历系统的总控大脑 (Supervisor)。你的任务是分析用户输入，将其路由到最合适的处理意图。
+
+### 上下文摘要 (长期记忆)
+{summary}
+
+### 输入信息
+- 用户当前指令: {input}
 
 请严格从以下 **四个** 选项中选择一个：
 
@@ -25,6 +39,7 @@ SUPERVISOR_SYSTEM_PROMPT = """
 
 4. **chat (闲聊)**: 
     - 适用场景：问候、功能询问、通用建议，不涉及具体的搜索或修改动作。
+    - 注意：如果用户说 "继续"、"再改改" 等依赖上下文的指令，请结合对话历史判断其真实意图。
 
 ### 输出格式
 请务必直接输出一个合法的 JSON 对象。
@@ -39,9 +54,12 @@ AGENT_SYSTEM_PROMPT = """
 
 ### 任务目标
 1. 分析用户的指令。
-2. 参考提供的上下文内容 (简历原始数据)。
+2. 参考提供的上下文内容 (简历原始数据) 和对话历史。
 3. **结合提供的参考信息 (如JD、行业调研数据) 进行针对性优化**。
 4. 将修改后的内容转换为标准的 Quill Delta 格式输出。
+
+### 上下文摘要 (长期记忆)
+{summary}
 
 ### 输入数据说明
 - 用户指令: {user_prompt}
@@ -96,6 +114,10 @@ REVIEW_SYSTEM_PROMPT = """
 CHAT_SYSTEM_PROMPT = """
 你是一个热情、专业且富有同理心的 AI 简历助手。
 你的主要职责是帮助用户修改简历、进行简历诊断和提供职业建议。
+
+### 上下文摘要 (长期记忆)
+{summary}
+
 请输出 JSON 格式，包含 "reply" 字段。
 """
 
@@ -137,9 +159,17 @@ class LLMService:
         self._init_chains()
 
     def _init_chains(self):
+        # 0. Summary Chain (新增)
+        summary_prompt = ChatPromptTemplate.from_messages([
+            ("system", SUMMARY_SYSTEM_PROMPT),
+            ("user", "{conversation}")
+        ])
+        self.summary_chain = summary_prompt | self.llm | StrOutputParser()
+
         # 1. Supervisor Chain
         supervisor_prompt = ChatPromptTemplate.from_messages([
             ("system", SUPERVISOR_SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("user", "{input}")
         ])
         self.supervisor_chain = supervisor_prompt | self.llm | self.parser
@@ -147,6 +177,7 @@ class LLMService:
         # 2. Modify Agent Chain (核心修改：模版增加 reference_info)
         agent_prompt = ChatPromptTemplate.from_messages([
             ("system", AGENT_SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("user", "用户的指令：{user_prompt}\n参考信息：{reference_info}\n上下文内容：{context_json}")
         ])
         self.agent_chain = agent_prompt | self.llm | self.parser
@@ -161,6 +192,7 @@ class LLMService:
         # 4. Chat Agent Chain
         chat_prompt = ChatPromptTemplate.from_messages([
             ("system", CHAT_SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("user", "{user_input}")
         ])
         self.chat_chain = chat_prompt | self.llm | self.parser
@@ -186,22 +218,77 @@ class LLMService:
 
     # === Methods ===
 
-    async def process_supervisor_request(self, prompt: str):
-        return await self.supervisor_chain.ainvoke({"input": prompt})
+    async def _process_history_with_strategy(self, raw_history: list) -> dict:
+        """
+        综合处理历史记录：
+        1. 结构化转换 (Dict -> Message)
+        2. 滑动窗口 (保留最近 N 条)
+        3. 摘要生成 (如果历史过长)
+        """
+        WINDOW_SIZE = 6  # 保留最近 6 条对话 (3轮)
+        SUMMARY_THRESHOLD = 10 # 如果超过 10 条，触发摘要生成
+        
+        if not raw_history:
+            return {"summary": "无", "chat_history": []}
 
-    async def process_chat_request(self, prompt: str):
-        return await self.chat_chain.ainvoke({"user_input": prompt})
+        # 1. 分离新旧历史
+        recent_history = raw_history[-WINDOW_SIZE:]
+        older_history = raw_history[:-WINDOW_SIZE]
+        
+        # 2. 转换最近历史为 Message 对象
+        chat_messages = []
+        for msg in recent_history:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role == "user":
+                chat_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                chat_messages.append(AIMessage(content=content))
+        
+        # 3. 处理摘要 (如果历史很长)
+        summary_text = "无"
+        if len(raw_history) > SUMMARY_THRESHOLD and older_history:
+            # 为了性能，我们只对 older_history 进行摘要
+            # 将 older_history 格式化为文本
+            conversation_text = "\n".join([f"{m.get('role')}: {m.get('content')}" for m in older_history])
+            try:
+                # 异步生成摘要
+                summary_text = await self.summary_chain.ainvoke({"conversation": conversation_text})
+            except Exception as e:
+                print(f"Summary Generation Error: {e}")
+                summary_text = "无法生成摘要"
+
+        return {"summary": summary_text, "chat_history": chat_messages}
+
+    async def process_supervisor_request(self, prompt: str, history: list = []):
+        processed = await self._process_history_with_strategy(history)
+        return await self.supervisor_chain.ainvoke({
+            "input": prompt, 
+            "chat_history": processed["chat_history"],
+            "summary": processed["summary"]
+        })
+
+    async def process_chat_request(self, prompt: str, history: list = []):
+        processed = await self._process_history_with_strategy(history)
+        return await self.chat_chain.ainvoke({
+            "user_input": prompt, 
+            "chat_history": processed["chat_history"],
+            "summary": processed["summary"]
+        })
 
     async def process_review_request(self, resume_content: str):
         return await self.review_chain.ainvoke({"resume_content": resume_content})
 
     # [核心修改]：改为 async，增加 reference_info 参数
-    async def process_agent_request(self, prompt: str, context: str, reference_info: str = "无"):
+    async def process_agent_request(self, prompt: str, context: str, reference_info: str = "无", history: list = []):
         """调用修改 Agent"""
+        processed = await self._process_history_with_strategy(history)
         return await self.agent_chain.ainvoke({
             "user_prompt": prompt,
             "context_json": context,
-            "reference_info": reference_info  # 将搜索结果传入 Prompt
+            "reference_info": reference_info,  # 将搜索结果传入 Prompt
+            "chat_history": processed["chat_history"],
+            "summary": processed["summary"]
         })
     
     # [接口] 执行评估
@@ -224,7 +311,7 @@ llm_service = LLMService()
 
 # ================= WORKFLOW ENTRY POINT =================
 
-async def run_agent_workflow(user_input: str, context: dict) -> dict:
+async def run_agent_workflow(user_input: str, context: dict, history: list = []) -> dict:
     """
     执行 Agent 工作流：Supervisor -> (RAG) -> Agent
     """
@@ -233,7 +320,7 @@ async def run_agent_workflow(user_input: str, context: dict) -> dict:
     from app.services.tools.rag_retriever import search_and_rerank
 
     # 1. 意图识别
-    supervisor_result = await llm_service.process_supervisor_request(user_input)
+    supervisor_result = await llm_service.process_supervisor_request(user_input, history)
     intent = supervisor_result.get("next_agent", "chat")
     
     reference_info = "无"
@@ -251,7 +338,7 @@ async def run_agent_workflow(user_input: str, context: dict) -> dict:
     # 3. 路由执行
     if intent in ["modify", "research_modify"]:
         context_str = json.dumps(context, ensure_ascii=False)
-        agent_res = await llm_service.process_agent_request(user_input, context_str, reference_info)
+        agent_res = await llm_service.process_agent_request(user_input, context_str, reference_info, history)
         result = agent_res
         # 统一输出格式供 Benchmark 使用
         if "modified_data" in agent_res:
@@ -265,9 +352,9 @@ async def run_agent_workflow(user_input: str, context: dict) -> dict:
         # 如果是 research_consult，我们构造一个带 context 的 prompt
         if intent == "research_consult":
             prompt_with_context = f"用户问题: {user_input}\n参考资料: {reference_info}\n请根据参考资料回答。"
-            chat_res = await llm_service.process_chat_request(prompt_with_context)
+            chat_res = await llm_service.process_chat_request(prompt_with_context, history)
         else:
-            chat_res = await llm_service.process_chat_request(user_input)
+            chat_res = await llm_service.process_chat_request(user_input, history)
             
         result = chat_res
         result["content"] = chat_res.get("reply", "")

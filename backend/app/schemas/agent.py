@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List
 class ChatRequest(BaseModel):
     prompt: str
     context: str
+    history: List[Dict[str, str]] = []  # 新增：历史对话记录
 
 class AgentResponse(BaseModel):
     intention: str
