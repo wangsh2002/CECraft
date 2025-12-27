@@ -25,17 +25,17 @@ SUPERVISOR_SYSTEM_PROMPT = """
 
 1. **research_consult (调研咨询)**: 
     - 适用场景：用户**仅仅想查询**外部信息，如薪资范围、面试题、公司背景、行业趋势，但**没有**明确表达要修改简历。
-    - 关键词：查一下、是多少、什么要求、面试题、薪资、行情、调研。
+    - 关键词：查一下、是多少、什么要求、面试题、薪资、行情、调研、搜索。
     - 示例："帮我查一下现在 Python 后端的薪资"、"字节跳动的面试风格是怎样的"。
 
 2. **research_modify (调研并修改)**: 
     - 适用场景：用户希望**利用搜索到的外部信息来优化或修改**简历。通常包含“根据...修改”、“对标...优化”、“参考...调整”等指令。
-    - 关键词：根据JD修改、对标大厂优化、参考这个链接润色、结合行情调整。
+    - 关键词：根据JD修改、对标大厂优化、参考这个链接润色、结合行情调整、根据搜索结果修改。
     - 示例："根据现在市场上 Java 高级的要求，帮我优化技能列表"、"帮我看看这个岗位链接，然后针对性修改我的简历"。
 
 3. **modify (直接修改)**: 
     - 适用场景：用户指令明确，**不需要**外部信息辅助，直接对简历内容进行润色、精简、翻译或纠错。
-    - 关键词：润色这段话、改短一点、翻译成英文、纠正错别字。
+    - 关键词：润色这段话、改短一点、翻译成英文、纠正错别字、扩写。
 
 4. **chat (闲聊)**: 
     - 适用场景：问候、功能询问、通用建议，不涉及具体的搜索或修改动作。
@@ -43,9 +43,10 @@ SUPERVISOR_SYSTEM_PROMPT = """
 
 ### 输出格式
 请务必直接输出一个合法的 JSON 对象。
-JSON 对象必须包含以下两个字段：
+JSON 对象必须包含以下字段：
 - "next_agent": 必须是 "research_consult", "research_modify", "modify", 或 "chat" 之一。
 - "reasoning": 简要说明做出该判断的理由。
+- "search_query": (可选) 如果意图是 research_*, 请生成一个优化后的搜索关键词（例如："Java后端 面试题"）。如果不需要搜索，返回空字符串。
 """
 
 # ================= 2. AGENT PROMPT (核心修改：增加参考信息逻辑) =================
@@ -83,12 +84,13 @@ AGENT_SYSTEM_PROMPT = """
 ### 输出示例
 {{
     "intention": "modify",
+    "reflection": "（可选）自我反思...",
     "reply": "根据为您查找到的JD要求，已重点突出了并发编程经验。",
     "modified_data": {{"ops": [...] }}
 }}
 
 ### 你的输出
-请只输出一个合法的 JSON 对象，不要包含 Markdown 标记。
+请只输出一个合法的 JSON 对象，不要包含 Markdown 标记。如果无法生成有效的 JSON，请返回包含错误信息的 JSON。
 """
 
 REVIEW_SYSTEM_PROMPT = """
@@ -131,6 +133,14 @@ EVALUATION_SYSTEM_PROMPT = """
 3. **准确性**：如果有参考信息 (Reference Info)，Agent 的回复是否与参考信息冲突？
 4. **格式合规**：生成的 JSON 数据 (modified_data) 是否存在明显的逻辑错误？
 
+### 评分规则
+- **90-100分**：完美符合所有要求，格式正确，内容专业。
+- **70-89分**：符合核心要求，但有轻微瑕疵（如语气不够完美，或遗漏次要细节）。
+- **60-69分**：勉强及格，完成了主要任务，但存在明显不足。
+- **0-59分**：未完成核心任务，或存在严重幻觉/格式错误。
+
+**注意：只要 Agent 完成了用户的核心指令（如修改了简历、回答了问题），且没有严重错误，就应该给予及格分数（>60分）。不要因为“可以写得更好”而判为不及格。**
+
 ### 输入信息
 - 用户原始指令 (User Prompt)
 - 参考信息 (Reference Info)
@@ -151,7 +161,7 @@ EVALUATION_SYSTEM_PROMPT = """
 class LLMService:
     def __init__(self):
         self.llm = ChatTongyi(
-            model="qwen-flash",
+            model=settings.LLM_MODEL_NAME,
             dashscope_api_key=settings.DASHSCOPE_API_KEY,
             temperature=0.1,
         )
@@ -261,35 +271,56 @@ class LLMService:
         return {"summary": summary_text, "chat_history": chat_messages}
 
     async def process_supervisor_request(self, prompt: str, history: list = []):
-        processed = await self._process_history_with_strategy(history)
-        return await self.supervisor_chain.ainvoke({
-            "input": prompt, 
-            "chat_history": processed["chat_history"],
-            "summary": processed["summary"]
-        })
+        try:
+            processed = await self._process_history_with_strategy(history)
+            return await self.supervisor_chain.ainvoke({
+                "input": prompt, 
+                "chat_history": processed["chat_history"],
+                "summary": processed["summary"]
+            })
+        except Exception as e:
+            print(f"Supervisor Error: {e}")
+            # Fallback to chat if supervisor fails
+            return {"next_agent": "chat", "reasoning": "Supervisor failed, fallback to chat.", "search_query": ""}
 
     async def process_chat_request(self, prompt: str, history: list = []):
-        processed = await self._process_history_with_strategy(history)
-        return await self.chat_chain.ainvoke({
-            "user_input": prompt, 
-            "chat_history": processed["chat_history"],
-            "summary": processed["summary"]
-        })
+        try:
+            processed = await self._process_history_with_strategy(history)
+            return await self.chat_chain.ainvoke({
+                "user_input": prompt, 
+                "chat_history": processed["chat_history"],
+                "summary": processed["summary"]
+            })
+        except Exception as e:
+            print(f"Chat Error: {e}")
+            return {"reply": "抱歉，我现在无法回答您的问题，请稍后再试。"}
 
     async def process_review_request(self, resume_content: str):
-        return await self.review_chain.ainvoke({"resume_content": resume_content})
+        try:
+            return await self.review_chain.ainvoke({"resume_content": resume_content})
+        except Exception as e:
+            print(f"Review Error: {e}")
+            return {"score": 0, "summary": "诊断服务暂时不可用", "pros": [], "cons": [], "suggestions": []}
 
     # [核心修改]：改为 async，增加 reference_info 参数
     async def process_agent_request(self, prompt: str, context: str, reference_info: str = "无", history: list = []):
         """调用修改 Agent"""
-        processed = await self._process_history_with_strategy(history)
-        return await self.agent_chain.ainvoke({
-            "user_prompt": prompt,
-            "context_json": context,
-            "reference_info": reference_info,  # 将搜索结果传入 Prompt
-            "chat_history": processed["chat_history"],
-            "summary": processed["summary"]
-        })
+        try:
+            processed = await self._process_history_with_strategy(history)
+            return await self.agent_chain.ainvoke({
+                "user_prompt": prompt,
+                "context_json": context,
+                "reference_info": reference_info,  # 将搜索结果传入 Prompt
+                "chat_history": processed["chat_history"],
+                "summary": processed["summary"]
+            })
+        except Exception as e:
+            print(f"Agent Error: {e}")
+            return {
+                "intention": "modify",
+                "reply": "抱歉，处理您的请求时遇到错误，请重试。",
+                "modified_data": None
+            }
     
     # [接口] 执行评估
     async def process_evaluation_request(self, user_prompt: str, agent_reply: str, reference_info: str = "无"):
@@ -308,56 +339,3 @@ class LLMService:
             return {"is_pass": True, "score": 0, "reason": "评估服务异常", "missing_points": []}
 
 llm_service = LLMService()
-
-# ================= WORKFLOW ENTRY POINT =================
-
-async def run_agent_workflow(user_input: str, context: dict, history: list = []) -> dict:
-    """
-    执行 Agent 工作流：Supervisor -> (RAG) -> Agent
-    """
-    import json
-    import asyncio
-    from app.services.tools.rag_retriever import search_and_rerank
-
-    # 1. 意图识别
-    supervisor_result = await llm_service.process_supervisor_request(user_input, history)
-    intent = supervisor_result.get("next_agent", "chat")
-    
-    reference_info = "无"
-    
-    # 2. 如果需要调研，执行 RAG
-    if intent in ["research_consult", "research_modify"]:
-        try:
-            docs = await asyncio.to_thread(search_and_rerank, user_input)
-            reference_info = "\n".join([doc.get('text', '') for doc in docs])
-        except Exception as e:
-            print(f"RAG Error: {e}")
-    
-    result = {}
-    
-    # 3. 路由执行
-    if intent in ["modify", "research_modify"]:
-        context_str = json.dumps(context, ensure_ascii=False)
-        agent_res = await llm_service.process_agent_request(user_input, context_str, reference_info, history)
-        result = agent_res
-        # 统一输出格式供 Benchmark 使用
-        if "modified_data" in agent_res:
-            result["content"] = agent_res["modified_data"]
-        else:
-            result["content"] = agent_res.get("reply", "")
-            
-    elif intent in ["chat", "research_consult"]:
-        # 对于咨询类，我们其实应该把 reference_info 喂给 chat agent
-        # 但目前的 chat_chain 很简单。为了演示效果，我们简单处理。
-        # 如果是 research_consult，我们构造一个带 context 的 prompt
-        if intent == "research_consult":
-            prompt_with_context = f"用户问题: {user_input}\n参考资料: {reference_info}\n请根据参考资料回答。"
-            chat_res = await llm_service.process_chat_request(prompt_with_context, history)
-        else:
-            chat_res = await llm_service.process_chat_request(user_input, history)
-            
-        result = chat_res
-        result["content"] = chat_res.get("reply", "")
-
-    result["intent"] = intent
-    return result

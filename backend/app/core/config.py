@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     MILVUS_HOST: str | None = None
     MILVUS_PORT: int | None = None
     RAG_COLLECTION: str | None = None
+
+    # 模型配置 (Scheme 3: Centralized Config)
+    LLM_MODEL_NAME: str = "qwen-turbo"  # 默认模型
+    EMBEDDING_MODEL_NAME: str = "text-embedding-v3"
+    RERANK_MODEL_NAME: str = "gte-rerank"
     
     # Pydantic 配置
     model_config = SettingsConfigDict(

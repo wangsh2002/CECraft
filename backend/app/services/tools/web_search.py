@@ -2,6 +2,7 @@ import asyncio
 from typing import List
 from langchain_community.chat_models import ChatTongyi
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from crawl4ai import AsyncWebCrawler
 from ddgs import DDGS
 
@@ -24,18 +25,10 @@ async def perform_web_search(query: str) -> str:
     """
     对外暴露的主函数：输入问题 -> 返回清洗后的 Markdown 摘要
     """
-    # 策略优化：智能判断是否为招聘类查询
-    # 如果是招聘相关，追加关键词以避开反爬严重的官网，命中社区/聚合页
-    # 如果是通用问题（如“什么是RAG”），则保持原样
-    recruitment_keywords = ["招聘", "岗位", "职位", "面试", "面经", "offer", "薪资", "待遇", "要求", "职责", "内推"]
-    is_recruitment_query = any(k in query for k in recruitment_keywords)
-    
-    if is_recruitment_query:
-        refined_query = f"{query} 岗位职责 任职要求 面经"
-        print(f"--- [Researcher] 识别为招聘类查询，优化搜索词: {refined_query} ---")
-    else:
-        refined_query = query
-        print(f"--- [Researcher] 识别为通用查询，保持原样: {refined_query} ---")
+    # 策略优化：使用 LLM 进行搜索词重写，替代简单的关键词拼接
+    # 这能更精准地处理 "帮我查一下..." 等自然语言
+    refined_query = await _optimize_query_with_llm(query)
+    print(f"--- [Researcher] 原始问题: {query} | 优化后搜索词: {refined_query} ---")
 
     print(f"--- [Researcher] 开始联网搜索: {refined_query} ---")
     
@@ -59,6 +52,30 @@ async def perform_web_search(query: str) -> str:
 # ==========================================
 # 3. 内部工具函数 (Helper Functions)
 # ==========================================
+
+async def _optimize_query_with_llm(query: str) -> str:
+    """
+    使用 LLM 将用户自然语言转化为搜索引擎友好的关键词查询
+    """
+    prompt = ChatPromptTemplate.from_template(
+        """你是一个搜索专家。请将用户的自然语言问题转化为一个针对搜索引擎优化的关键词查询。
+        
+        原则：
+        1. 去除无意义的词（如“帮我查一下”、“我想知道”）。
+        2. 提取核心实体（如技术栈、职位、公司）。
+        3. 如果是招聘相关，适当补充“面经”、“薪资”、“JD”、“任职要求”等高价值后缀。
+        4. 保持简短，通常不超过 5 个关键词。
+        
+        用户问题: {query}
+        
+        优化后的搜索词 (仅输出一行文本):"""
+    )
+    chain = prompt | llm | StrOutputParser()
+    try:
+        return await chain.ainvoke({"query": query})
+    except Exception as e:
+        print(f"Query Optimization Failed: {e}")
+        return query
 
 async def _search_duckduckgo(query: str, limit: int = 3) -> List[str]:
     """

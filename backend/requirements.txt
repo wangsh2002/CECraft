@@ -13,3 +13,4 @@ pymilvus==2.3.0
 unstructured
 langchain_text_splitters
 ddgs
+langgraph
