@@ -60,11 +60,15 @@ async def _optimize_query_with_llm(query: str) -> str:
     prompt = ChatPromptTemplate.from_template(
         """你是一个搜索专家。请将用户的自然语言问题转化为一个针对搜索引擎优化的关键词查询。
         
-        原则：
+          原则：
         1. 去除无意义的词（如“帮我查一下”、“我想知道”）。
         2. 提取核心实体（如技术栈、职位、公司）。
-        3. 如果是招聘相关，适当补充“面经”、“薪资”、“JD”、“任职要求”等高价值后缀。
-        4. 保持简短，通常不超过 5 个关键词。
+          3. 如果是招聘相关，优先补充更容易在公开网页中找到且可抓取的限定词：
+              - “官网 招聘 / careers / jobs / join us / hiring”
+              - “JD / job description / 任职要求 / 岗位职责 / 内推 / 校招 / 社招”
+              尽量避免只指向强反爬的第三方招聘平台（如 Boss/拉勾/猎聘/智联/51job）。
+        4. **地域推断**：如果用户使用中文且未明确指定国家（如“美国”、“新加坡”），请默认添加“中国”或“国内”作为限定词，以避免搜索到无关的海外信息。
+        5. 保持简短，通常不超过 5 个关键词。
         
         用户问题: {query}
         
@@ -84,23 +88,87 @@ async def _search_duckduckgo(query: str, limit: int = 3) -> List[str]:
     try:
         # DDGS 是同步库，为了不阻塞异步循环，我们在线程池中运行
         def run_search():
-            with DDGS() as ddgs:
+            # 增加超时时间到 10 秒，防止网络波动导致超时
+            with DDGS(timeout=10) as ddgs:
                 # 策略优化：
                 # 1. 增加搜索结果数量 (max_results=10)，然后手动过滤
                 # 2. 优先选择包含 "blog", "article", "zhuanlan", "post" 等关键词的 URL
                 # 3. 排除掉一些低质量的 SEO 农场或无法访问的站点
-                results = list(ddgs.text(query, max_results=10))
+                # 4. region="cn-zh" 强制搜索中国地区结果
+                results = list(ddgs.text(query, region="cn-zh", max_results=10))
                 
                 filtered_urls = []
                 # 优先站点关键词
-                priority_domains = ["zhihu.com", "juejin.cn", "csdn.net", "v2ex.com", "segmentfault.com", "cnblogs.com", "infoq.cn", "woshipm.com"]
+                priority_domains = [
+                    "zhihu.com",
+                    "juejin.cn",
+                    "csdn.net",
+                    "v2ex.com",
+                    "segmentfault.com",
+                    "cnblogs.com",
+                    "infoq.cn",
+                    "woshipm.com",
+                    # 微信公众号 / 开发者社区
+                    "mp.weixin.qq.com",
+                    "cloud.tencent.com",
+                    "developer.aliyun.com",
+                    "huaweicloud.com",
+                    "openatom.org",
+                    # 开源与问答
+                    "github.com",
+                    "gitee.com",
+                    "stackoverflow.com",
+                    # 技术社区/博客
+                    "oschina.net",
+                    "jianshu.com",
+                    "51cto.com",
+                    "ruanyifeng.com",
+                    "liaoxuefeng.com",
+                ]
+                # URL 优先关键词（更容易命中“公司官网招聘页/JD镜像/内推帖”等）
+                priority_url_keywords = [
+                    "/careers",
+                    "/career",
+                    "/jobs",
+                    "/job",
+                    "/join",
+                    "/join-us",
+                    "/hiring",
+                    "/recruit",
+                    "recruitment",
+                    "\u62db\u8058",  # 招聘
+                    "\u5185\u63a8",  # 内推
+                    "\u6821\u62db",  # 校招
+                    "\u793e\u62db",  # 社招
+                    "\u4efb\u804c\u8981\u6c42",  # 任职要求
+                    "\u5c97\u4f4d\u804c\u8d23",  # 岗位职责
+                    "job-description",
+                    "job_description",
+                    "jd",
+                ]
                 # 排除站点关键词
-                exclude_domains = ["baidu.com", "so.com", "sogou.com", "google.com", "bing.com", "youtube.com", "bilibili.com"] # 排除搜索引擎自身或视频站
+                exclude_domains = [
+                    "baidu.com",
+                    "so.com",
+                    "sogou.com",
+                    "google.com",
+                    "bing.com",
+                    "youtube.com",
+                    "bilibili.com",
+                    # 强反爬招聘站（避免抓取失败浪费额度）
+                    "zhipin.com",
+                    "lagou.com",
+                    "liepin.com",
+                    "zhaopin.com",
+                    "51job.com",
+                    "51job.cn",
+                ] # 排除搜索引擎自身/视频站/强反爬招聘站
 
-                # 第一轮：优先筛选高质量社区/博客
+                # 第一轮：优先筛选高质量社区/博客 或 命中招聘页关键词
                 for r in results:
                     url = r['href']
-                    if any(d in url for d in priority_domains):
+                    url_lc = url.lower()
+                    if any(d in url_lc for d in priority_domains) or any(k in url_lc for k in priority_url_keywords):
                         filtered_urls.append(url)
                 
                 # 第二轮：如果不够，补充其他非排除站点的结果
