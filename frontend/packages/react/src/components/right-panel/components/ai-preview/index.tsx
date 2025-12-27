@@ -63,9 +63,39 @@ export const AIPreviewModal: FC<AIPreviewModalProps> = ({
         } catch(e) {}
       }
       
-      if (sourceData && Array.isArray(sourceData.ops)) {
+      // Check if it is a DeltaSet (Dict of Deltas) returned by backend
+      const isDeltaSet = sourceData && typeof sourceData === 'object' && !Array.isArray(sourceData) && !Array.isArray(sourceData.ops) && Object.keys(sourceData).some(k => {
+          const item = sourceData[k];
+          return item && typeof item === 'object' && item.key === 'text';
+      });
+
+      if (isDeltaSet) {
+          // Sort by y to maintain order
+          const sortedItems = Object.values(sourceData).sort((a: any, b: any) => (a.y || 0) - (b.y || 0));
+          
+          const combinedOps: any[] = [];
+          
+          for (const item of sortedItems) {
+              const dataStr = (item as any).attrs?.DATA;
+              if (dataStr) {
+                  const lines = TSON.parse<RichTextLines>(dataStr);
+                  if (lines) {
+                      const partDelta = sketchToTextDelta(lines);
+                      if (partDelta && partDelta.ops) {
+                          combinedOps.push(...partDelta.ops);
+                          // Ensure newline between blocks if needed (simple heuristic)
+                          const lastOp = combinedOps[combinedOps.length - 1];
+                          if (typeof lastOp.insert === 'string' && !lastOp.insert.endsWith('\n')) {
+                              combinedOps.push({ insert: '\n' });
+                          }
+                      }
+                  }
+              }
+          }
+          newDelta = new BlockDelta(combinedOps);
+      } else if (sourceData && Array.isArray(sourceData.ops)) {
         newDelta = new BlockDelta(sourceData.ops);
-      } else {
+      } else if (sourceData) {
         newDelta = sketchToTextDelta(sourceData as RichTextLines);
       }
 

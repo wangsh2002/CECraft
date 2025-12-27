@@ -6,12 +6,14 @@ from openai import OpenAI
 # Ensure backend is in path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.core.config import settings
+
 class RAGEvaluator:
     def __init__(self):
-        self.api_key = os.getenv("DASHSCOPE_API_KEY")
-        self.api_url = os.getenv("DASHSCOPE_API_URL")
+        self.api_key = settings.OPENAI_API_KEY
+        self.api_url = settings.OPENAI_API_BASE
         self.client = OpenAI(api_key=self.api_key, base_url=self.api_url)
-        self.model = "qwen-turbo"  # Use a capable model for judging
+        self.model = settings.LLM_MODEL_PRO  # Use a capable model for judging
 
     def evaluate_faithfulness(self, question: str, contexts: List[str], answer: str) -> float:
         """

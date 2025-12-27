@@ -27,8 +27,17 @@ from pymilvus import (
 
 from openai import OpenAI
 
+# 尝试导入配置
+try:
+    from app.core.config import settings
+except ImportError:
+    # 如果直接运行脚本可能找不到 app，尝试添加路径
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from app.core.config import settings
+
 # 从 .env 文件加载环境变量
-load_dotenv()  
+# load_dotenv() # Config handles this  
 
 # --- utilities ---
 
@@ -194,7 +203,7 @@ def call_embedding_api(texts: List[str], api_url: str, api_key: Optional[str] = 
             
             # 调用接口
             resp = client.embeddings.create(
-                model="text-embedding-v3", 
+                model=settings.EMBEDDING_MODEL_NAME, 
                 input=batch_texts,
                 encoding_format="float"
             )
@@ -395,10 +404,10 @@ def main():
     parser = argparse.ArgumentParser(description='Ingest local markdown to Milvus via embedding API')
     parser.add_argument('--source', required=True, help='Markdown 文件或目录')
     parser.add_argument('--collection', default='md_collection', help='Milvus collection 名称')
-    parser.add_argument('--milvus-host', default=os.getenv('MILVUS_HOST', '127.0.0.1'))
-    parser.add_argument('--milvus-port', default=os.getenv('MILVUS_PORT', '19530'))
-    parser.add_argument('--api-url', default=os.getenv('DASHSCOPE_API_URL'))
-    parser.add_argument('--api-key', default=os.getenv('DASHSCOPE_API_KEY'))
+    parser.add_argument('--milvus-host', default=settings.MILVUS_HOST or '127.0.0.1')
+    parser.add_argument('--milvus-port', default=str(settings.MILVUS_PORT) if settings.MILVUS_PORT else '19530')
+    parser.add_argument('--api-url', default=settings.OPENAI_API_BASE)
+    parser.add_argument('--api-key', default=settings.OPENAI_API_KEY)
     parser.add_argument('--chunk-size', type=int, default=1000)
     parser.add_argument('--overlap', type=int, default=200)
     parser.add_argument('--recursive', action='store_true')
@@ -406,7 +415,7 @@ def main():
     args = parser.parse_args()
 
     if not args.api_url:
-        print('错误：未配置嵌入 API 地址，请设置环境变量 DASHSCOPE_API_URL 或使用 --api-url 参数')
+        print('错误：未配置嵌入 API 地址，请设置环境变量 OPENAI_API_BASE 或使用 --api-url 参数')
         return
 
     ingest_directory(

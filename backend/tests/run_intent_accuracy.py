@@ -186,13 +186,12 @@ async def choose_tool(query: str) -> str:
     """复用 graph_workflow.py 中的 ToolRouter prompt，输出 web/rag/both。"""
 
     router_prompt = (
-        f"Analyze the following query and decide which tool to use.\n"
-        f"Query: {query}\n\n"
-        f"Tools:\n"
-        f"1. 'web': For specific company info, JD (Job Description), market data, real-time info.\n"
-        f"2. 'rag': For resume writing tips, STAR method examples, standard phrases, internal knowledge.\n"
-        f"3. 'both': If both are needed.\n\n"
-        f"Return only one word: 'web', 'rag', or 'both'."
+        f"分析查询: '{query}'\n"
+        f"选择最佳信息源:\n"
+        f"- 'web': 需要实时/外部信息 (JD、薪资、公司新闻、市场行情)。\n"
+        f"- 'rag': 需要方法论/内部知识 (STAR法则、简历模板、写作技巧)。\n"
+        f"- 'both': 明确需要**同时**结合外部数据和内部方法论。\n"
+        f"仅输出一个词: 'web', 'rag', 或 'both'。"
     )
 
     try:

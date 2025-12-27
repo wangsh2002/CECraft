@@ -17,15 +17,16 @@ from evaluation.business_value import BusinessValueEvaluator
 # 导入系统核心功能
 from app.services.tools.rag_retriever import search_and_rerank
 from app.services.agent_workflow import run_agent_workflow, llm_service
+from app.core.config import settings
 
-load_dotenv()
+# load_dotenv() # Config handles this
 
 class BenchmarkRunner:
     def __init__(self):
         self.rag_evaluator = RAGEvaluator()
         self.biz_evaluator = BusinessValueEvaluator()
-        self.client = OpenAI(api_key=os.getenv("DASHSCOPE_API_KEY"), base_url=os.getenv("DASHSCOPE_API_URL"))
-        self.model = "qwen-turbo"
+        self.client = OpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_API_BASE)
+        self.model = settings.LLM_MODEL_PRO
 
     async def run_baseline(self, prompt: str, context: str = "") -> str:
         """

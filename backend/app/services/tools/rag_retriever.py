@@ -20,8 +20,8 @@ def _call_embedding_api(texts: List[str]) -> List[List[float]]:
     """
     texts = [t.replace("\n", " ") for t in texts]
     
-    client = OpenAI(api_key=settings.DASHSCOPE_API_KEY, 
-                    base_url=settings.DASHSCOPE_API_URL)
+    client = OpenAI(api_key=settings.OPENAI_API_KEY, 
+                    base_url=settings.OPENAI_API_BASE)
     
     resp = client.embeddings.create(model=settings.EMBEDDING_MODEL_NAME, 
                                     input=texts, 
@@ -44,7 +44,7 @@ def _ensure_milvus_connection():
 
 def _generate_answer_with_llm(query: str, context: str) -> str:
     """Use the OpenAI-compatible API to generate a final answer given query and retrieved context."""
-    client = OpenAI(api_key=settings.DASHSCOPE_API_KEY, base_url=settings.DASHSCOPE_API_URL)
+    client = OpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_API_BASE)
 
     prompt = (
         "你是一个有帮助的助理。使用下面的检索到的上下文回答用户的问题：\n\n"
@@ -64,7 +64,7 @@ def _generate_sub_queries(query: str) -> List[str]:
     """
     使用 LLM 生成相关的子查询，用于多路召回
     """
-    client = OpenAI(api_key=settings.DASHSCOPE_API_KEY, base_url=settings.DASHSCOPE_API_URL)
+    client = OpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_API_BASE)
     prompt = (
         f"你是一个搜索专家。请根据用户的问题 '{query}'，生成 3 个相关的搜索查询，"
         "以便从简历数据库或岗位描述中检索到更全面的信息。\n"

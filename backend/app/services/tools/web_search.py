@@ -1,6 +1,6 @@
 import asyncio
 from typing import List
-from langchain_community.chat_models import ChatTongyi
+from langchain_community.chat_models import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from crawl4ai import AsyncWebCrawler
@@ -12,9 +12,10 @@ from app.core.config import settings
 # 1. 初始化模型 (用于最后的总结清洗)
 # ==========================================
 # 为了节省成本，这里建议使用 qwen-turbo 或 qwen-plus，不需要用 max
-llm = ChatTongyi(
-    model="qwen-turbo",
-    dashscope_api_key=settings.DASHSCOPE_API_KEY,
+llm = ChatOpenAI(
+    model=settings.LLM_MODEL_LITE,
+    openai_api_key=settings.OPENAI_API_KEY,
+    openai_api_base=settings.OPENAI_API_BASE,
     temperature=0.1
 )
 

@@ -11,13 +11,14 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 from app.services.tools.rag_retriever import search_and_rerank, retrieve_resume_examples
+from app.core.config import settings
 
-load_dotenv()
+# load_dotenv() # Config handles this
 
 class SimpleRAGEvaluator:
     def __init__(self):
-        self.api_key = os.getenv("DASHSCOPE_API_KEY")
-        self.api_url = os.getenv("DASHSCOPE_API_URL")
+        self.api_key = settings.OPENAI_API_KEY
+        self.api_url = settings.OPENAI_API_BASE
         self.client = OpenAI(api_key=self.api_key, base_url=self.api_url)
 
     def evaluate_context_recall(self, question: str, contexts: List[str], ground_truth: str) -> float:

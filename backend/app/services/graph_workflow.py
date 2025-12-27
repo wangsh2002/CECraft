@@ -58,13 +58,12 @@ async def research_node(state: AgentState):
     print(f"--- [ToolRouter] Analyzing query: {query} ---")
     
     router_prompt = (
-        f"Analyze the following query and decide which tool to use.\n"
-        f"Query: {query}\n\n"
-        f"Tools:\n"
-        f"1. 'web': For specific company info, JD (Job Description), market data, real-time info.\n"
-        f"2. 'rag': For resume writing tips, STAR method examples, standard phrases, internal knowledge.\n"
-        f"3. 'both': If both are needed.\n\n"
-        f"Return only one word: 'web', 'rag', or 'both'."
+        f"分析查询: '{query}'\n"
+        f"选择最佳信息源:\n"
+        f"- 'web': 需要实时/外部信息 (JD、薪资、公司新闻、市场行情)。\n"
+        f"- 'rag': 需要方法论/内部知识 (STAR法则、简历模板、写作技巧)。\n"
+        f"- 'both': 明确需要**同时**结合外部数据和内部方法论。\n"
+        f"仅输出一个词: 'web', 'rag', 或 'both'。"
     )
     
     try:
@@ -143,15 +142,9 @@ async def modify_node(state: AgentState):
         reference_info = f"""
         {reference_info}
         
-        =========================================
-        [⚠️ 质量修正模式 / REFLECTIVE RETRY]
-        上一次生成的内容未通过质量审核。
-        {feedback}
-        
-        请执行以下步骤：
-        1. **自我反思 (Reflection)**: 分析为什么上次的回答不符合要求，并在 JSON 的 "reflection" 字段中写下你的思考。
-        2. **重新生成**: 基于反思和建议，重新生成 "reply" 和 "modified_data"。
-        =========================================
+        [REFLECTIVE RETRY]
+        上次未通过审核。反馈：{feedback}
+        请反思并重新生成 "reply" 和 "modified_data"。
         """
     
     res = await llm_service.process_agent_request(user_input, context_json, reference_info, history)
@@ -171,11 +164,13 @@ async def evaluation_node(state: AgentState):
     reference_info = state.get("reference_info", "无")
     
     agent_reply = final_res.get("reply", "")
+    modified_data = final_res.get("modified_data", {})
     
     eval_result = await llm_service.process_evaluation_request(
         user_prompt=user_input,
         agent_reply=agent_reply,
-        reference_info=reference_info
+        reference_info=reference_info,
+        modified_data=modified_data
     )
     
     is_pass = eval_result.get("is_pass", True)
@@ -254,7 +249,7 @@ def route_after_research(state: AgentState):
 def route_after_evaluation(state: AgentState):
     if state.get("is_pass", True):
         return "formatter"
-    if state.get("retry_count", 0) > 2: # Max 2 retries
+    if state.get("retry_count", 0) > 0: # Max 0 retries (1 attempt total)
         print("--- Max Retries Reached ---")
         return "formatter" # Fallback to formatter even if failed
     return "modify"

@@ -27,10 +27,13 @@ else:
 class Settings(BaseSettings):
     # --- 必填配置 ---
     # 如果 .env 里没有这个，程序会直接报错停止，防止后面瞎跑
-    DASHSCOPE_API_KEY: str
+    # DASHSCOPE_API_KEY: str  # Deprecated
+    OPENAI_API_KEY: str
+    DASHSCOPE_API_KEY: str | None = None # Keep for backward compatibility if needed
     
     # --- 可选配置 (带默认值) ---
     DASHSCOPE_API_URL: str | None = None
+    OPENAI_API_BASE: str = "https://jeniya.top/v1"
     
     # 向量数据库配置
     MILVUS_HOST: str | None = None
@@ -46,9 +49,13 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # 模型配置 (Scheme 3: Centralized Config)
-    LLM_MODEL_NAME: str = "qwen-turbo"  # 默认模型
-    EMBEDDING_MODEL_NAME: str = "text-embedding-v3"
-    RERANK_MODEL_NAME: str = "gte-rerank"
+    LLM_MODEL_LITE: str = "qwen-flash"   # 轻量级模型 (摘要、简单分类)
+    LLM_MODEL_PRO: str = "qwen-flash"      # 专业级模型 (生成、推理、复杂指令)
+    
+    # 兼容旧配置 (指向 Lite 或 Pro 均可，这里指向 Pro 以保证默认质量)
+    LLM_MODEL_NAME: str = "qwen-flash"
+    EMBEDDING_MODEL_NAME: str = "text-embedding-v4"
+    RERANK_MODEL_NAME: str = "qwen3-rerank"
     
     # Pydantic 配置
     model_config = SettingsConfigDict(
@@ -64,7 +71,7 @@ class Settings(BaseSettings):
 try:
     settings = Settings()
     # 为了安全，只打印 Key 的前几位
-    masked_key = f"{settings.DASHSCOPE_API_KEY[:4]}******" if settings.DASHSCOPE_API_KEY else "None"
+    masked_key = f"{settings.OPENAI_API_KEY[:4]}******" if settings.OPENAI_API_KEY else "None"
     print(f"✅ [Config] 配置加载成功 (Key: {masked_key})\n")
 except Exception as e:
     print(f"💥 [Config] 配置加载崩溃: {e}")
