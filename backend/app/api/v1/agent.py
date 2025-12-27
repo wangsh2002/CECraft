@@ -1,18 +1,24 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import asyncio
 from app.schemas.agent import ChatRequest, AgentResponse, ReviewRequest, ReviewResponse
 from app.services.agent_workflow import llm_service
 # [新增] 导入我们刚才测试通过的联网搜索工具
 from app.services.tools.web_search import perform_web_search
 from app.services.tools.rag_retriever import retrieve_resume_examples
+from app.api import deps
+from app.models.user import User
 
 router = APIRouter()
 
 # 1. 诊断接口
 @router.post("/review", response_model=ReviewResponse)
-async def ai_review_process(request: ReviewRequest):
+async def ai_review_process(
+    request: ReviewRequest,
+    current_user: User = Depends(deps.get_current_user)
+):
     try:
         print(f"收到诊断请求，内容长度: {len(request.resume_content)}")
+        print(f"用户: {current_user.email}")
         
         # 调用 Service
         # 注意：如果 process_review_request 是异步函数，记得加 await
@@ -36,12 +42,17 @@ async def ai_review_process(request: ReviewRequest):
 # router / api.py
 
 @router.post("/agent", response_model=AgentResponse) 
-async def execute_agent_workflow(request: ChatRequest):
+async def execute_agent_workflow(
+    request: ChatRequest,
+    current_user: User = Depends(deps.get_current_user)
+):
     try:
         # 引入 LangGraph 构建的图
         from app.services.graph_workflow import app_graph
         import uuid
         
+        print(f"用户: {current_user.email} 请求 Agent")
+
         # 构造初始状态
         inputs = {
             "user_input": request.prompt,

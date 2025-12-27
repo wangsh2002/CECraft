@@ -7,6 +7,7 @@ import { DeltaSet } from "sketching-delta";
 import { Image, Rect, Text } from "sketching-plugin";
 
 import { App } from "./components/app";
+import { AuthProvider } from "./hooks/use-auth";
 
 DeltaSet.register(Rect);
 DeltaSet.register(Text);
@@ -26,5 +27,10 @@ if (isPreview) {
     document.getElementById("root")
   );
 } else {
-  ReactDOM.render(<App />, document.getElementById("root"));
+  ReactDOM.render(
+    <AuthProvider>
+      <App />
+    </AuthProvider>,
+    document.getElementById("root")
+  );
 }

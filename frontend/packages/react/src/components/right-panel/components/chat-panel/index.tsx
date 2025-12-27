@@ -13,6 +13,9 @@ import { AIPreviewModal } from "../ai-preview";
 import { ReviewModal, type ReviewResult } from "../review-modal";
 import { sketchToTextDelta } from "../text/utils/transform";
 import styles from "./index.m.scss";
+import { api } from "../../../../utils/api";
+import { useAuth } from "../../../../hooks/use-auth";
+import { AuthModal } from "../../../auth";
 
 interface ChatMessage {
     id: string;
@@ -42,6 +45,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
     const [previewData, setPreviewData] = useState<any>(null);
     const [showPreview, setShowPreview] = useState(false);
     const [currentPreviewState, setCurrentPreviewState] = useState<any>(null);
+
+    // Auth states
+    const { user } = useAuth();
+    const [authVisible, setAuthVisible] = useState(false);
 
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -83,6 +90,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
     const handleReviewSubmit = async (e: any) => {
         e.stopPropagation();
         if (isReviewing) return;
+        if (!user) {
+            setAuthVisible(true);
+            return;
+        }
         if (!isTextSelected || !activeState) {
             Message.warning("请先选中一段简历内容（文本框）");
             return;
@@ -91,15 +102,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
         setIsReviewing(true);
         try {
             const contextStr = extractContext();
-            const response = await fetch("http://localhost:8000/api/ai/review", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ resume_content: contextStr }),
-            });
+            const response = await api.post("/ai/review", { resume_content: contextStr });
 
-            if (!response.ok) throw new Error(`Status ${response.status}`);
-
-            const result: ReviewResult = await response.json();
+            const result: ReviewResult = response.data;
             setReviewResult(result);
             setShowReviewModal(true);
             Message.success("诊断完成！");
@@ -113,6 +118,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
 
     const handleSendMessage = async () => {
         if (!inputValue.trim() || isLoading) return;
+        if (!user) {
+            setAuthVisible(true);
+            return;
+        }
         if (!isTextSelected || !activeState) {
             Message.warning("请先选中一个文本框");
             return;
@@ -133,18 +142,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
         const contextStr = extractContext();
 
         try {
-            const response = await fetch("http://localhost:8000/api/ai/agent", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    prompt: userMsg.content, 
-                    context: contextStr 
-                }),
+            const response = await api.post("/ai/agent", { 
+                prompt: userMsg.content, 
+                context: contextStr 
             });
 
-            if (!response.ok) throw new Error(`Status ${response.status}`);
-
-            const result = await response.json();
+            const result = response.data;
             
             const aiMsg: ChatMessage = {
                 id: (Date.now() + 1).toString(),
@@ -301,6 +304,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
                 onClose={() => setShowReviewModal(false)}
                 result={reviewResult}
             />
+            <AuthModal visible={authVisible} onCancel={() => setAuthVisible(false)} />
         </div>
     );
 };

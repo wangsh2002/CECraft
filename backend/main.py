@@ -2,6 +2,13 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import agent as agent_router
+from app.api.v1 import auth as auth_router
+from app.api.v1 import resumes as resumes_router
+from app.db.base import Base
+from app.db.session import engine
+
+# Create tables
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="CECraft Agent API")
 
@@ -18,7 +25,14 @@ app.add_middleware(
 # 注意：前端之前调用的是 /api/ai/review 和 /api/ai/agent
 # 这里通过 prefix 统一配置，router 内部只需要写 /review 和 /agent
 app.include_router(agent_router.router, prefix="/api/ai", tags=["AI Agent"])
+app.include_router(auth_router.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(resumes_router.router, prefix="/api/resumes", tags=["Resumes"])
+
+@app.get("/")
+async def root():
+    return {"message": "CECraft Backend API is running. Visit /docs for API documentation."}
 
 if __name__ == "__main__":
     # 使用字符串加载方式，支持热重载
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # 排除 volumes 目录，防止 MinIO 运行时产生的临时文件导致 reload 报错
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, reload_excludes=["volumes"])

@@ -14,3 +14,9 @@ unstructured
 langchain_text_splitters
 duckduckgo-search
 langgraph
+sqlalchemy
+pymysql
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+email-validator

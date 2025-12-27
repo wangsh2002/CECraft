@@ -61,6 +61,20 @@ services:
       - "etcd"
       - "minio"
 
+  mysql:
+    image: mysql:8.0
+    container_name: cecraft-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: cecraft
+      MYSQL_USER: cecraft_user
+      MYSQL_PASSWORD: cecraft_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/mysql:/var/lib/mysql
+
 networks:
   default:
     name: milvus
