@@ -17,13 +17,25 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
 
 ### 1.2 智能体工作流 (Agentic Workflow)
 
-系统采用基于 LangGraph 的多智能体协作模式：
+系统采用基于 LangGraph 的多智能体协作模式，实现了更细粒度的意图识别与自我修正机制：
 
-* **总控大脑 (Supervisor)**：负责意图识别与路由，将请求分发至 ChatBot、Drafter 或 Researcher。
-* **智能检索 (Researcher)**：内置工具路由 (ToolRouter)，根据查询意图自动选择 Web Search (联网搜索) 或 VectorDB (RAG 知识库)，并进行多源信息融合。
-* **写作与质检闭环 (Drafter & Reviewer)**：
-    * **Drafter**：负责草稿生成与修改。
-    * **Reviewer**：对生成内容进行质量评估，若不合格则反馈修改意见，形成自我修正闭环。
+* **总控大脑 (Supervisor)**：基于对话摘要与当前指令，将用户意图细分为 6 类：
+    * `research_consult`: 纯咨询（薪资、行情）。
+    * `research_modify`: 基于调研的修改（结合 JD、STAR 法则）。
+    * `modify`: 纯文本润色/翻译。
+    * `research_create`: 基于调研的从头撰写（针对空白内容）。
+    * `create`: 纯文本撰写。
+    * `chat`: 通用对话。
+* **智能调研 (Researcher)**：内置 **ToolRouter**，智能选择信息源：
+    * **Web Search**: 获取实时外部信息（JD、公司背景）。
+    * **RAG (VectorDB)**: 检索内部方法论（简历模板、写作技巧）。
+    * **Hybrid**: 双源融合，同时获取市场数据与专业话术。
+* **生成与优化 (Generator)**：
+    * **Context-Aware**: 结合调研结果与用户原有内容（Delta 格式）进行生成。
+    * **Strict Formatting**: 强制 Markdown 输出，自动加粗关键技能，严格保留排版空格。
+* **质量评估闭环 (Evaluator)**：
+    * **Self-Correction**: 对生成结果进行自动化评分（意图一致性、幻觉检测、格式校验）。
+    * **Retry Mechanism**: 若评分未通过，自动携带反馈意见触发重试，确保最终交付质量。
 * **格式化输出 (Formatter)**：确保最终响应符合标准 API 格式。
 
 ## 2. 核心业务设计
@@ -38,13 +50,13 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
     * 前端将 Token 存储于本地，并在后续所有 API 请求的 Header 中携带 `Authorization: Bearer <token>` 进行身份校验。
 * **依赖注入**：利用 FastAPI 的 `Depends` 机制，在 API 路由层统一拦截并解析 Token，自动注入当前用户对象 (`current_user`)，实现细粒度的权限控制。
 
-### 2.2 简历管理与解析 (Resume Management)
+### 2.2 简历管理 (Resume Management)
 
-简历数据的全生命周期管理，涵盖上传、解析、存储与版本控制。
+简历数据的全生命周期管理，涵盖创建、编辑、存储与版本控制。
 
-* **文件上传与解析**：
-    * 支持 PDF/Word/Markdown 等多种格式上传。
-    * 后端集成解析引擎，提取文本内容并转换为系统内部的 Delta 数据结构，为后续的 AI 处理提供标准化的上下文。
+* **在线编辑与创建**：
+    * 支持基于 Canvas 的高性能富文本编辑器，提供流畅的简历编写体验。
+    * 支持从零创建简历或基于模板进行编辑。
 * **结构化存储**：
     * 简历元数据（标题、创建时间）存储于关系型数据库。
     * 简历正文内容（Delta JSON）作为大字段存储，支持高效的读写操作。
@@ -63,7 +75,7 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
     * `id`: 主键
     * `title`: 简历标题
     * `content`: 简历内容 (JSON 格式的大文本，存储 Delta 数据)
-    * `owner_id`: 外键，关联 User 表
+    * `user_id`: 外键，关联 User 表
     * `created_at` / `updated_at`: 时间戳
 
 ## 3. 技术架构深度解析
@@ -75,7 +87,7 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
 为提升领域知识的召回精度，系统实现了全链路优化的 RAG 流水线：
 
 * **两阶段检索 (Two-stage Retrieval)**：
-* **召回层 (Retrieval)**：结合查询扩展 (Query Expansion) 生成多路子查询，通过混合检索 (Hybrid Search) 提升 Recall。
+* **召回层 (Retrieval)**：结合查询扩展 (Query Expansion) 生成多路子查询，通过高维向量检索 (Dense Retrieval) 提升 Recall。
 * **排序层 (Rerank)**：引入 **GTE-Rerank** (Cross-Encoder) 模型对向量召回结果进行语义精排，显著提升 Top-K 准确率。
 
 
@@ -89,7 +101,22 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
 
 
 
-### 2.2 无状态上下文管理 (Stateless Context Management)
+### 3.2 智能联网搜索 (Intelligent Web Search)
+
+针对通用大模型知识滞后的问题，系统构建了基于 **Search-Crawl-Summarize** 范式的实时信息获取引擎：
+
+* **查询意图优化 (Query Refinement)**：
+    * 利用 LLM 将用户模糊的自然语言（如“帮我查下现在的行情”）转化为高信噪比的搜索关键词（如“2024 前端开发 薪资范围 北京”），显著提升搜索命中率。
+* **策略性搜索 (Strategic Search)**：
+    * **多源支持**：默认集成 **DuckDuckGo** (隐私保护)，可选接入 **Bocha** (专业搜索 API)。
+    * **智能过滤 (Domain Filtering)**：内置白名单机制，优先召回技术社区 (GitHub, StackOverflow, Juejin) 与官方招聘页，自动降权 SEO 农场与视频站点。
+* **高并发网页解析 (Concurrent Parsing)**：
+    * **Jina Reader 集成**：利用 `r.jina.ai` 服务将异构 HTML 实时转换为 LLM 友好的 Markdown 格式，保留核心语义结构。
+    * **异步并发**：基于 `aiohttp` 实现多路并行抓取，将平均响应时间控制在秒级。
+* **抗噪摘要生成 (Anti-Noise Summarization)**：
+    * 设计专用的 Prompt 模板，强制模型执行“去噪”操作，剔除广告与无关导航，精准提取 JD 中的硬性技能与岗位职责。
+
+### 3.3 无状态上下文管理 (Stateless Context Management)
 
 采用“前端托管 + 混合记忆”架构，解决服务端会话状态存储压力及 Token 上下文窗口限制：
 
@@ -101,15 +128,27 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
 
 * **结构化注入**：利用 LangChain 的 `MessagesPlaceholder` 实现 System/Human/AI 消息的结构化隔离，防止指令注入攻击和角色混淆。
 
-### 2.3 智能体工作流 (Agentic Workflow with LangGraph)
+### 3.4 智能体工作流 (Agentic Workflow with LangGraph)
 
 系统采用 **LangGraph** 将复杂的业务逻辑重构为有向循环图 (StateGraph)，实现了更高级的控制流：
 
 * **状态机架构 (State Machine)**：明确定义了 `Supervisor` -> `Research` -> `Modify` -> `Evaluation` 的状态流转路径。
+* **双向格式桥接 (Bi-directional Format Bridge)**：
+    * **Delta to Markdown**: 将前端复杂的富文本数据结构（Delta）无损转换为 LLM 可理解的 Markdown 格式，保留加粗、列表、链接等核心语义。
+    * **Markdown to Delta**: 自研解析引擎，将 LLM 生成的 Markdown 文本自动映射回 Canvas 渲染所需的 Delta 数据结构，支持多级列表、样式嵌套及 Slate 兼容格式 (Origin Data) 的同步生成。
 * **自我修正循环 (Self-Correction Loop)**：
     * 引入 `Evaluation Node` 对生成结果进行自动化质检。
     * 若未通过质检，工作流自动回退至 `Modify Node`，并注入专家反馈意见，强制 Agent 进行反思 (Reflection) 和重试。
 * **状态持久化 (Checkpointing)**：利用 `MemorySaver` 实现状态的实时保存与恢复，支持长会话管理和断点续传。
+
+### 3.5 高性能渲染引擎 (High-Performance Rendering Engine)
+
+前端摒弃了传统的 DOM 编辑方案，采用自研 Canvas 引擎实现像素级渲染控制：
+
+* **Custom Canvas Engine**: 基于 `CanvasRenderingContext2D` 的直接绘制，支持 60FPS 流畅渲染与 `devicePixelRatio` 高清屏适配。
+* **Spatial Delta Model**: 采用 `x, y, z, width, height` 的空间数据模型替代线性 OT 算法，原生支持复杂的自由布局与组件嵌套。
+* **Plugin Architecture**: 采用微内核+插件架构，Text、Image、Rect 等均为独立插件，具备极高的扩展性。
+* **Core Modules**: 内置完整的 History (Undo/Redo)、Selection (多选/框选) 及 Clipboard (剪贴板) 模块，提供桌面级的编辑体验。
 
 ## 5. 系统评测 (Evaluation & Benchmark)
 
