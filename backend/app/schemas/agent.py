@@ -6,6 +6,7 @@ class ChatRequest(BaseModel):
     prompt: str
     context: str
     history: List[Dict[str, str]] = []  # 新增：历史对话记录
+    block_size: Optional[Dict[str, float]] = None # 新增：文本块大小限制 {width, height}
 
 class AgentResponse(BaseModel):
     intention: str

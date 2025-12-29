@@ -62,7 +62,8 @@ async def execute_agent_workflow(
             "history": request.history,
             "retry_count": 0,
             "is_pass": True,
-            "evaluation_feedback": ""
+            "evaluation_feedback": "",
+            "block_size": request.block_size
         }
         
         # 生成临时的 thread_id
@@ -82,10 +83,10 @@ async def execute_agent_workflow(
                         # 根据当前完成的节点，预测下一个状态并发送反馈
                         if node_name == "supervisor":
                             next_step = state_update.get("next_step")
-                            if next_step in ["research_consult", "research_modify"]:
+                            if next_step in ["research_consult", "research_modify", "research_create"]:
                                 yield json.dumps({"type": "status", "content": "正在进行深度调研 (联网/RAG)..."}) + "\n"
-                            elif next_step == "modify":
-                                yield json.dumps({"type": "status", "content": "正在修改简历..."}) + "\n"
+                            elif next_step in ["modify", "create"]:
+                                yield json.dumps({"type": "status", "content": "正在撰写/修改简历..."}) + "\n"
                             else:
                                 yield json.dumps({"type": "status", "content": "正在思考回复..."}) + "\n"
                         

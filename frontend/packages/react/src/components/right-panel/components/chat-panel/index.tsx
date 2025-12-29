@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Input, Button, Message, Spin, Avatar } from "@arco-design/web-react";
+import { Input, Button, Message, Spin, Avatar, Checkbox, Tooltip } from "@arco-design/web-react";
 import { 
     IconRobot, IconUser, IconExperiment, IconCopy, IconEye, 
-    IconCaretDown, IconCaretRight, IconSend 
+    IconCaretDown, IconCaretRight, IconSend, IconMessage, IconQuestionCircle
 } from "@arco-design/web-react/icon";
 import ReactMarkdown from 'react-markdown';
 import { cs, TSON } from "sketching-utils";
@@ -35,6 +35,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
     const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
     const [inputValue, setInputValue] = useState("");
     const [isLoading, setIsLoading] = useState(false);
+    const [useContext, setUseContext] = useState(true);
     
     // Review states
     const [isReviewing, setIsReviewing] = useState(false);
@@ -54,13 +55,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
 
     const isTextSelected = activeState?.key === NAV_ENUM.TEXT;
 
-    useEffect(() => {
-        if (!isTextSelected) {
-            setIsExpanded(false);
-        } else {
-            setIsExpanded(true);
-        }
-    }, [isTextSelected]);
+    // 移除自动收起的逻辑，允许用户手动控制
+    // useEffect(() => {
+    //     if (!isTextSelected) {
+    //         setIsExpanded(false);
+    //     } else {
+    //         setIsExpanded(true);
+    //     }
+    // }, [isTextSelected]);
 
     useEffect(() => {
         if (scrollRef.current) {
@@ -122,10 +124,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
             setAuthVisible(true);
             return;
         }
-        if (!isTextSelected || !activeState) {
-            Message.warning("请先选中一个文本框");
-            return;
-        }
+        // 移除强制选中检查，允许纯闲聊
+        // if (!isTextSelected || !activeState) { ... }
 
         const userMsg: ChatMessage = {
             id: Date.now().toString(),
@@ -139,8 +139,24 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
         setIsLoading(true);
         setIsExpanded(true);
 
-        const contextStr = extractContext();
+        // 只有在选中了文本且用户勾选了“引用”时，才发送 context
+        const shouldSendContext = isTextSelected && useContext;
+        const contextStr = shouldSendContext ? extractContext() : "";
         
+        let blockSize = null;
+        if (shouldSendContext && activeState && typeof activeState.toRange === 'function') {
+            try {
+                const range = activeState.toRange();
+                if (range) {
+                    const width = Math.abs(range.end.x - range.start.x);
+                    const height = Math.abs(range.end.y - range.start.y);
+                    blockSize = { width, height };
+                }
+            } catch (e) {
+                console.warn("Failed to get block size:", e);
+            }
+        }
+
         // Placeholder for AI response
         const aiMsgId = (Date.now() + 1).toString();
         setChatHistory(prev => [...prev, {
@@ -162,7 +178,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
                 },
                 body: JSON.stringify({ 
                     prompt: userMsg.content, 
-                    context: contextStr 
+                    context: contextStr,
+                    block_size: blockSize
                 })
             });
 
@@ -229,10 +246,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
     };
 
     const toggleExpand = () => {
-        if (!isTextSelected) {
-            Message.info("请先选中简历中的文本框");
-            return;
-        }
+        // 移除强制选中检查
+        // if (!isTextSelected) {
+        //     Message.info("请先选中简历中的文本框");
+        //     return;
+        // }
         setIsExpanded(!isExpanded);
     };
 
@@ -321,13 +339,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
                     </div>
                     
                     <div className={styles.inputArea}>
+                        {isTextSelected && (
+                            <div className={styles.options}>
+                                <Checkbox checked={useContext} onChange={setUseContext}>
+                                    引用选中内容
+                                </Checkbox>
+                                <Tooltip content="勾选后，AI 将基于选中的简历内容进行回答；取消勾选则进行通用闲聊。">
+                                    <IconQuestionCircle />
+                                </Tooltip>
+                            </div>
+                        )}
                         <Input.Search
-                            placeholder={isTextSelected ? "输入修改需求..." : "请先选中文本框"}
+                            placeholder={isTextSelected && useContext ? "针对选中内容提问..." : "输入问题进行闲聊..."}
                             value={inputValue}
                             onChange={setInputValue}
                             onSearch={handleSendMessage}
                             searchButton={isLoading ? <Spin size={14} /> : <IconSend />}
-                            disabled={isLoading || isReviewing || !isTextSelected}
+                            disabled={isLoading || isReviewing}
                         />
                     </div>
                 </div>

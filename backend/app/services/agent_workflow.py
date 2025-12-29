@@ -22,14 +22,16 @@ SUPERVISOR_SYSTEM_PROMPT = """
    - **外部信息**: JD、市场热点、公司要求。
    - **专业方法**: STAR法则、简历范文、高分模板。
 3. **modify**: 仅基于**现有内容**的简单修改（润色、翻译、纠错、改格式），**不涉及**上述外部信息或专业方法。
-4. **chat**: 闲聊、问候或无法归类。
+4. **research_create**: 需**从头撰写**简历内容（针对空白块），且涉及外部信息或专业方法。
+5. **create**: 仅基于用户指令**从头撰写**简历内容（针对空白块），**不涉及**外部信息或专业方法。
+6. **chat**: 闲聊、问候或无法归类。
 
 摘要: {summary}
 指令: {input}
 
 输出JSON:
 {{
-    "next_agent": "research_consult" | "research_modify" | "modify" | "chat",
+    "next_agent": "research_consult" | "research_modify" | "modify" | "research_create" | "create" | "chat",
     "reasoning": "简短理由",
     "search_query": "关键词(仅research_*需)"
 }}
@@ -38,16 +40,21 @@ SUPERVISOR_SYSTEM_PROMPT = """
 # ================= 2. AGENT PROMPT (核心修改：增加参考信息逻辑) =================
 AGENT_SYSTEM_PROMPT = """
 简历优化助手。
-任务: 分析指令{user_prompt}，参考{reference_info}，修改简历{context_json}。
+任务: 分析指令{user_prompt}，参考{reference_info}，修改或撰写简历内容{context_json}。
 规则:
-- 结合参考信息修改。
-- 严禁改专有名词、公司、数字。
-- 保持Markdown格式。**仅对技术名词（如Java, Docker）、核心量化数据（如50%, 100万）、关键专有名词**进行特殊格式处理，严禁对普通动词、形容词或整句进行特殊格式处理。
+1. **内容生成**: 结合参考信息修改或撰写。语言严肃专业，严禁使用表情符号。
+2. **格式规范**: 
+   - 必须使用 Markdown 格式。
+   - **关键技术栈、核心数据、专有名词**必须加粗（如 **Python**, **30%**）。
+   - 严禁对普通动词、形容词或整句加粗。
+3. **排版逻辑**:
+   - 对于多项技能或经历，**必须使用无序列表**（- Item）分行展示，严禁堆砌成一大段。
+   - 确保内容清晰、易读。
 
 输出JSON:
 {{
-    "intention": "modify",
-    "reply": "说明",
+    "intention": "modify" | "create",
+    "reply": "在此处简要说明修改或撰写的重点（例如：'已为您撰写自我介绍，突出了Python经验...'）。不要在reply中重复输出完整的简历内容。",
     "modified_content": "Markdown内容"
 }}
 """
@@ -279,44 +286,60 @@ class LLMService:
             return {"score": 0, "summary": "诊断服务暂时不可用", "pros": [], "cons": [], "suggestions": []}
 
     # [核心修改]：改为 async，增加 reference_info 参数
-    async def process_agent_request(self, prompt: str, context: str, reference_info: str = "无", history: list = []):
+    async def process_agent_request(self, prompt: str, context: str, reference_info: str = "无", history: list = [], block_size: dict = None, intent: str = "modify"):
         """调用修改 Agent"""
         try:
             # 1. 预处理：将 context (Delta) 转为 Markdown
             context_data = {}
-            try:
-                context_data = json.loads(context)
-            except:
-                pass
+            markdown_context = ""
             
-            # 假设 context 是包含 content 的字典
-            original_content = context
-            if isinstance(context_data, dict) and "content" in context_data:
-                original_content = context_data["content"]
-            
-            # 转换 content 为 Markdown
-            markdown_context = delta_to_markdown(original_content)
-            
-            # Fallback: 如果转换结果为空但原始内容不为空，直接使用原始内容字符串
-            if not markdown_context and original_content:
-                print("⚠️ [Agent] delta_to_markdown returned empty. Falling back to raw content.")
-                if isinstance(original_content, (dict, list)):
-                    markdown_context = json.dumps(original_content, ensure_ascii=False)
-                else:
-                    markdown_context = str(original_content)
+            # 如果是创建意图，忽略 context
+            if intent in ["create", "research_create"]:
+                markdown_context = "(空白内容，请根据指令撰写)"
+            else:
+                try:
+                    context_data = json.loads(context)
+                except:
+                    pass
+                
+                # 假设 context 是包含 content 的字典
+                original_content = context
+                if isinstance(context_data, dict) and "content" in context_data:
+                    original_content = context_data["content"]
+                
+                # 转换 content 为 Markdown
+                markdown_context = delta_to_markdown(original_content)
+                
+                # Fallback: 如果转换结果为空但原始内容不为空，直接使用原始内容字符串
+                if not markdown_context and original_content:
+                    print("⚠️ [Agent] delta_to_markdown returned empty. Falling back to raw content.")
+                    if isinstance(original_content, (dict, list)):
+                        markdown_context = json.dumps(original_content, ensure_ascii=False)
+                    else:
+                        markdown_context = str(original_content)
             
             # 如果 context 是字典，更新 content 字段以便 LLM 看到其他元数据
-            if isinstance(context_data, dict):
+            if isinstance(context_data, dict) and intent not in ["create", "research_create"]:
                 context_data["content"] = markdown_context
                 context_input = json.dumps(context_data, ensure_ascii=False)
             else:
                 context_input = markdown_context
 
+            # 2. 构造约束信息
+            constraint_msg = ""
+            if block_size:
+                width = block_size.get("width", 0)
+                height = block_size.get("height", 0)
+                # 估算：假设字体大小 14px，行高 20px
+                if width > 0 and height > 0:
+                    estimated_lines = int(height / 20)
+                    constraint_msg = f"\n[排版约束] 当前显示区域高度约 {height}px (约 {estimated_lines} 行)。请在保持内容完整的前提下，尽量控制行数。如果内容较多，请精简文字，但**必须保留列表结构**以便阅读。"
+
             processed = await self._process_history_with_strategy(history)
             
             # 2. 调用 LLM
             res = await self.agent_chain.ainvoke({
-                "user_prompt": prompt,
+                "user_prompt": prompt + constraint_msg,
                 "context_json": context_input, # 传入 Markdown
                 "reference_info": reference_info,  # 将搜索结果传入 Prompt
                 "chat_history": processed["chat_history"],
@@ -331,8 +354,11 @@ class LLMService:
                 delta_json = markdown_to_delta(modified_content_md)
                 modified_data = json.loads(delta_json) # 转为对象返回
             
+            # 统一返回 intention，如果是 create/research_create，返回 create
+            final_intent = "create" if intent in ["create", "research_create"] else "modify"
+            
             return {
-                "intention": "modify",
+                "intention": final_intent,
                 "reply": res.get("reply", ""),
                 "modified_data": modified_data
             }

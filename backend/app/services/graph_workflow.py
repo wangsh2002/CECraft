@@ -14,6 +14,7 @@ class AgentState(TypedDict):
     user_input: str
     context_json: str
     history: List[dict]
+    block_size: Dict[str, float]
     
     # Internal State
     next_step: str
@@ -133,6 +134,8 @@ async def modify_node(state: AgentState):
     context_json = state["context_json"]
     reference_info = state.get("reference_info", "无")
     history = state.get("history", [])
+    block_size = state.get("block_size")
+    intent = state.get("next_step", "modify") # 获取意图
     
     # Handle Retry Logic
     feedback = state.get("evaluation_feedback")
@@ -147,11 +150,11 @@ async def modify_node(state: AgentState):
         请反思并重新生成 "reply" 和 "modified_data"。
         """
     
-    res = await llm_service.process_agent_request(user_input, context_json, reference_info, history)
+    res = await llm_service.process_agent_request(user_input, context_json, reference_info, history, block_size, intent=intent)
     
     # Format for API response
     final_res = {
-        "intention": "modify",
+        "intention": res.get("intention", "modify"), # 使用返回的 intention
         "reply": res.get("reply", ""),
         "modified_data": res.get("modified_data", {})
     }
@@ -194,16 +197,23 @@ async def formatter_node(state: AgentState):
     # Ensure the final response is in the correct format
     final_res = state.get("final_response", {})
     
+    intention = final_res.get("intention", "chat")
+    
+    # [重要修改] 前端目前仅识别 "modify" 意图来触发预览/应用窗口
+    # 因此，将 "create" 意图映射为 "modify"
+    if intention == "create":
+        intention = "modify"
+    
     # Default structure
     formatted_res = {
-        "intention": final_res.get("intention", "chat"),
+        "intention": intention,
         "reply": final_res.get("reply", ""),
         "modified_data": final_res.get("modified_data")
     }
     
-    # If intention is modify but no modified_data, fallback to chat or log warning
+    # If intention is modify/create but no modified_data, fallback to chat or log warning
     if formatted_res["intention"] == "modify" and not formatted_res["modified_data"]:
-        print("⚠️ [Formatter] Intention is 'modify' but 'modified_data' is missing.")
+        print(f"⚠️ [Formatter] Intention is '{formatted_res['intention']}' but 'modified_data' is missing.")
         # Optionally change intention to chat if data is missing
         # formatted_res["intention"] = "chat"
         
@@ -233,16 +243,16 @@ async def chat_node(state: AgentState):
 # Edge Logic
 def route_after_supervisor(state: AgentState):
     intent = state["next_step"]
-    if intent in ["research_consult", "research_modify"]:
+    if intent in ["research_consult", "research_modify", "research_create"]:
         return "research"
-    elif intent == "modify":
+    elif intent in ["modify", "create"]:
         return "modify"
     else:
         return "chat"
 
 def route_after_research(state: AgentState):
     intent = state["next_step"]
-    if intent == "research_modify":
+    if intent in ["research_modify", "research_create"]:
         return "modify"
     else:
         return "chat" # research_consult goes to chat to summarize findings
