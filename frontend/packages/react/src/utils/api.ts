@@ -1,6 +1,8 @@
 import axios from "axios";
 
-const API_URL = "http://localhost:8000/api";
+// 动态获取 API 地址：使用当前访问的主机名，端口固定为 8000
+// 这样无论是本地开发(localhost)还是云服务器访问(IP/域名)，都能正确指向后端
+const API_URL = `${window.location.protocol}//${window.location.hostname}:8000/api`;
 
 export const api = axios.create({
   baseURL: API_URL,

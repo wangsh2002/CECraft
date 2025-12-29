@@ -9,6 +9,8 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
 ### 1.1 核心功能
 
 * **多模态调研与咨询 (Deep Research)**：集成 Web Search 工具，支持针对薪资范围、面试题库及企业背景的外部信息检索。
+    * **搜索引擎**：DuckDuckGo (隐私保护，无追踪)。
+    * **网页解析**：Jina Reader (云端解析，将网页转为 LLM 友好的 Markdown)。
 * **岗位匹配与优化 (Targeted Optimization)**：解析目标岗位 JD，自动提取关键技能实体，调整简历的语义侧重以提升人岗匹配度。
 * **基于 STAR 法则的重写 (Structure Transformation)**：自动将描述性文本重构为符合 "Situation-Task-Action-Result" 标准的专业履历。
 * **专业级富文本编辑 (Canvas Editor)**：支持 Delta 数据结构、自定义插件系统及精确的打印布局控制。
@@ -24,11 +26,51 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
     * **Reviewer**：对生成内容进行质量评估，若不合格则反馈修改意见，形成自我修正闭环。
 * **格式化输出 (Formatter)**：确保最终响应符合标准 API 格式。
 
-## 2. 技术架构深度解析
+## 2. 核心业务设计
+
+### 2.1 用户认证与安全 (Authentication & Security)
+
+系统采用标准的 OAuth2 密码模式与 JWT (JSON Web Token) 机制，确保用户身份验证的安全性和无状态性。
+
+* **注册与登录流程**：
+    * 用户提交注册信息后，后端通过 `bcrypt` 算法对密码进行加盐哈希存储，杜绝明文密码泄露风险。
+    * 登录成功后，系统签发包含用户 ID 和过期时间的 `access_token` (JWT)。
+    * 前端将 Token 存储于本地，并在后续所有 API 请求的 Header 中携带 `Authorization: Bearer <token>` 进行身份校验。
+* **依赖注入**：利用 FastAPI 的 `Depends` 机制，在 API 路由层统一拦截并解析 Token，自动注入当前用户对象 (`current_user`)，实现细粒度的权限控制。
+
+### 2.2 简历管理与解析 (Resume Management)
+
+简历数据的全生命周期管理，涵盖上传、解析、存储与版本控制。
+
+* **文件上传与解析**：
+    * 支持 PDF/Word/Markdown 等多种格式上传。
+    * 后端集成解析引擎，提取文本内容并转换为系统内部的 Delta 数据结构，为后续的 AI 处理提供标准化的上下文。
+* **结构化存储**：
+    * 简历元数据（标题、创建时间）存储于关系型数据库。
+    * 简历正文内容（Delta JSON）作为大字段存储，支持高效的读写操作。
+* **版本管理**：支持对同一份简历的多次修改保存，方便用户回溯历史版本。
+
+### 2.3 数据库设计 (Database Schema)
+
+采用 MySQL 作为主数据库，通过 SQLAlchemy ORM 进行模型定义与操作，确保数据的一致性与完整性。
+
+* **User 表**：存储用户基础信息。
+    * `id`: 主键
+    * `email`: 唯一索引，用于登录
+    * `hashed_password`: 加密后的密码
+    * `is_active`: 账户状态
+* **Resume 表**：存储简历数据，与 User 表建立一对多关联。
+    * `id`: 主键
+    * `title`: 简历标题
+    * `content`: 简历内容 (JSON 格式的大文本，存储 Delta 数据)
+    * `owner_id`: 外键，关联 User 表
+    * `created_at` / `updated_at`: 时间戳
+
+## 3. 技术架构深度解析
 
 本项目重点解决了通用 LLM 在长上下文管理、领域知识检索及指令遵循稳定性方面的工程挑战。
 
-### 2.1 检索增强生成 (Advanced RAG Pipeline)
+### 3.1 检索增强生成 (Advanced RAG Pipeline)
 
 为提升领域知识的召回精度，系统实现了全链路优化的 RAG 流水线：
 
@@ -69,30 +111,35 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
     * 若未通过质检，工作流自动回退至 `Modify Node`，并注入专家反馈意见，强制 Agent 进行反思 (Reflection) 和重试。
 * **状态持久化 (Checkpointing)**：利用 `MemorySaver` 实现状态的实时保存与恢复，支持长会话管理和断点续传。
 
-## 3. 系统评测 (Evaluation & Benchmark)
+## 5. 系统评测 (Evaluation & Benchmark)
 
 基于 50+ 真实业务场景构建自动化评测集，采用 **LLM-as-a-Judge** 范式进行量化评估。
 
-### 3.1 业务指标
+### 5.1 业务指标
 
 | Metric | Baseline (Zero-shot) | CECraft | Improvement |
 | --- | --- | --- | --- |
 | **STAR Compliance** | 35.0% | **91.8%** | +162.5% |
 | **Resume Quality Score** | 57.5 | **85.0** | +27.5 |
 
-### 3.2 工程指标
+### 5.2 工程指标
 
 * **Context Recall (召回率)**: 0.75
 * **Faithfulness (忠实度)**: 0.90 (基于 RAGAS 框架评估)
 * **End-to-End Latency**: 5.50s (P90)
 * **Intent Accuracy**: 100%
 
-## 4. 项目结构
+## 6. 项目结构
 
 ```text
 CECraft/
 ├── backend/                    # Python Backend (FastAPI + LangChain)
 │   ├── app/
+│   │   ├── api/              # RESTful API Endpoints (Auth, Resume, Agent)
+│   │   ├── core/             # Config & Security (JWT, Password Hashing)
+│   │   ├── db/               # Database Session & Base Models
+│   │   ├── models/           # SQLAlchemy ORM Models (User, Resume)
+│   │   ├── schemas/          # Pydantic Schemas (Request/Response Validation)
 │   │   ├── services/
 │   │   │   ├── graph_workflow.py # LangGraph State Machine & Workflow definition
 │   │   │   ├── agent_workflow.py # LLM Services & Prompt Templates
@@ -100,7 +147,7 @@ CECraft/
 │   │   └── ...
 │   ├── crawl_docs.py           # Data crawler for Resumes/JDs
 │   ├── ingest_rag.py           # Vector embedding pipeline
-│   └── docker-compose.yml      # Infrastructure (Milvus, MinIO, Etcd)
+│   └── docker-compose.yml      # Infrastructure (Milvus, MinIO, Etcd, MySQL)
 ├── frontend/                   # Frontend Monorepo
 │   ├── packages/
 │   │   ├── core/               # Custom Canvas rendering engine
@@ -111,7 +158,7 @@ CECraft/
 
 ```
 
-## 5. 快速开始
+## 7. 快速开始
 
 ### 前置要求
 

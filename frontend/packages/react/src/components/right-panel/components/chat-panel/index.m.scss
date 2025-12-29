@@ -71,6 +71,29 @@
   }
 }
 
+@keyframes gradient-text {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  
+  .thinkingText {
+    background: linear-gradient(90deg, #165DFF, #722ED1, #165DFF);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: gradient-text 3s linear infinite;
+    font-weight: 500;
+    font-size: 13px;
+  }
+}
+
 .avatar {
   flex-shrink: 0;
   margin-top: 2px;

@@ -153,7 +153,7 @@ class LLMService:
         chat_prompt = ChatPromptTemplate.from_messages([
             ("system", CHAT_SYSTEM_PROMPT),
             MessagesPlaceholder(variable_name="chat_history"),
-            ("user", "{user_input}")
+            ("user", "用户输入：{user_input}\n\n当前简历内容（供参考）：\n{context}")
         ])
         self.chat_chain = chat_prompt | self.llm_pro | self.parser
 
@@ -236,11 +236,34 @@ class LLMService:
             # Fallback to chat if supervisor fails
             return {"next_agent": "chat", "reasoning": "Supervisor failed, fallback to chat.", "search_query": ""}
 
-    async def process_chat_request(self, prompt: str, history: list = []):
+    async def process_chat_request(self, prompt: str, context: str = "", history: list = []):
         try:
+            # 1. 预处理：将 context (Delta) 转为 Markdown
+            context_data = {}
+            try:
+                context_data = json.loads(context)
+            except:
+                pass
+            
+            # 假设 context 是包含 content 的字典
+            original_content = context
+            if isinstance(context_data, dict) and "content" in context_data:
+                original_content = context_data["content"]
+            
+            # 转换 content 为 Markdown
+            markdown_context = delta_to_markdown(original_content)
+            
+            # Fallback
+            if not markdown_context and original_content:
+                if isinstance(original_content, (dict, list)):
+                    markdown_context = json.dumps(original_content, ensure_ascii=False)
+                else:
+                    markdown_context = str(original_content)
+
             processed = await self._process_history_with_strategy(history)
             return await self.chat_chain.ainvoke({
                 "user_input": prompt, 
+                "context": markdown_context,
                 "chat_history": processed["chat_history"],
                 "summary": processed["summary"]
             })

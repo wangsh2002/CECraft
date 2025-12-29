@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = "text-embedding-v4"
     RERANK_MODEL_NAME: str = "qwen3-rerank"
     
+    # Search Configuration
+    SEARCH_PROVIDER: str = "bocha"  # Options: "duckduckgo", "bocha"
+    BOCHA_API_KEY: str | None = None
+
     # Pydantic 配置
     model_config = SettingsConfigDict(
         # 核心修复点：强制使用计算出的【绝对路径】，而非默认的相对路径

@@ -1,9 +1,9 @@
 import asyncio
 from typing import List
+import aiohttp
 from langchain_community.chat_models import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from crawl4ai import AsyncWebCrawler
 from ddgs import DDGS
 
 from app.core.config import settings
@@ -31,21 +31,47 @@ async def perform_web_search(query: str) -> str:
     refined_query = await _optimize_query_with_llm(query)
     print(f"--- [Researcher] 原始问题: {query} | 优化后搜索词: {refined_query} ---")
 
-    print(f"--- [Researcher] 开始联网搜索: {refined_query} ---")
+    # === 路由逻辑 ===
+    provider = settings.SEARCH_PROVIDER.lower()
+    
+    if provider == "bocha":
+        if not settings.BOCHA_API_KEY:
+            print("❌ [Config] 未配置 BOCHA_API_KEY，请检查 .env 文件。")
+            return "配置错误：未设置 BOCHA_API_KEY。"
+        return await _perform_bocha_search(refined_query)
+
+    # === 默认 DuckDuckGo 逻辑 ===
+    print(f"--- [Researcher] 开始联网搜索 (DuckDuckGo): {refined_query} ---")
     
     # 步骤 A: 调用 DuckDuckGo 获取 URL 列表
-    # 增加 limit 数量，因为可能会有一些抓取失败
-    urls = await _search_duckduckgo(refined_query, limit=5) 
-    if not urls:
+    # 优化：减少 limit 到 3，提高响应速度
+    search_results = await _search_duckduckgo(refined_query, limit=3) 
+    if not search_results:
         return "未找到相关网络搜索结果。"
+
+    urls = [r['href'] for r in search_results]
 
     # 步骤 B: 并发抓取这些 URL 的内容
     print(f"--- [Researcher] 正在抓取 {len(urls)} 个网页... ---")
-    raw_contents = await _crawl_concurrently(urls)
+    crawled_contents = await _crawl_concurrently(urls)
 
-    # 步骤 C: 让 LLM 清洗并提取摘要
+    # 步骤 C: 混合策略 (Crawl 失败则使用 Snippet)
+    final_contents = []
+    for i, content in enumerate(crawled_contents):
+        if content and "Warning: Target URL returned error" not in content:
+            final_contents.append(content)
+        else:
+            # Fallback to snippet
+            snippet = search_results[i].get('body', '')
+            title = search_results[i].get('title', '')
+            url = search_results[i].get('href', '')
+            if snippet:
+                print(f"--- [Fallback] 使用 Snippet 替代抓取失败: {url} ---")
+                final_contents.append(f"来源URL: {url}\n标题: {title}\n内容摘要(Snippet): {snippet}")
+
+    # 步骤 D: 让 LLM 清洗并提取摘要
     print(f"--- [Researcher] 正在生成摘要... ---")
-    summary = await _summarize_content(query, raw_contents)
+    summary = await _summarize_content(query, final_contents)
     
     print(f"--- [Researcher] 搜索任务完成 ---")
     return summary
@@ -82,9 +108,9 @@ async def _optimize_query_with_llm(query: str) -> str:
         print(f"Query Optimization Failed: {e}")
         return query
 
-async def _search_duckduckgo(query: str, limit: int = 3) -> List[str]:
+async def _search_duckduckgo(query: str, limit: int = 3) -> List[dict]:
     """
-    私有函数：使用 DuckDuckGo 获取搜索结果链接
+    私有函数：使用 DuckDuckGo 获取搜索结果 (返回完整对象: href, body, title)
     """
     try:
         # DDGS 是同步库，为了不阻塞异步循环，我们在线程池中运行
@@ -92,13 +118,13 @@ async def _search_duckduckgo(query: str, limit: int = 3) -> List[str]:
             # 增加超时时间到 10 秒，防止网络波动导致超时
             with DDGS(timeout=10) as ddgs:
                 # 策略优化：
-                # 1. 增加搜索结果数量 (max_results=10)，然后手动过滤
+                # 1. 增加搜索结果数量 (max_results=8)，然后手动过滤
                 # 2. 优先选择包含 "blog", "article", "zhuanlan", "post" 等关键词的 URL
                 # 3. 排除掉一些低质量的 SEO 农场或无法访问的站点
                 # 4. region="cn-zh" 强制搜索中国地区结果
-                results = list(ddgs.text(query, region="cn-zh", max_results=10))
+                results = list(ddgs.text(query, region="cn-zh", max_results=8))
                 
-                filtered_urls = []
+                filtered_results = []
                 # 优先站点关键词
                 priority_domains = [
                     "zhihu.com",
@@ -170,69 +196,63 @@ async def _search_duckduckgo(query: str, limit: int = 3) -> List[str]:
                     url = r['href']
                     url_lc = url.lower()
                     if any(d in url_lc for d in priority_domains) or any(k in url_lc for k in priority_url_keywords):
-                        filtered_urls.append(url)
+                        filtered_results.append(r)
                 
                 # 第二轮：如果不够，补充其他非排除站点的结果
-                if len(filtered_urls) < limit:
+                if len(filtered_results) < limit:
                     for r in results:
                         url = r['href']
-                        if url not in filtered_urls and not any(d in url for d in exclude_domains):
-                            filtered_urls.append(url)
-                            if len(filtered_urls) >= limit:
+                        # Check if already added (by url)
+                        if not any(fr['href'] == url for fr in filtered_results) and not any(d in url for d in exclude_domains):
+                            filtered_results.append(r)
+                            if len(filtered_results) >= limit:
                                 break
                 
-                return filtered_urls[:limit]
+                return filtered_results[:limit]
         
-        urls = await asyncio.to_thread(run_search)
-        print(f"DuckDuckGo 返回链接: {urls}")
-        return urls
+        results = await asyncio.to_thread(run_search)
+        print(f"DuckDuckGo 返回结果数: {len(results)}")
+        return results
     except Exception as e:
         print(f"DuckDuckGo 搜索异常: {str(e)}")
         return []
 
 async def _crawl_concurrently(urls: List[str]) -> List[str]:
     """
-    私有函数：使用 Crawl4AI 并发抓取多个 URL
+    私有函数：使用 Jina Reader (https://r.jina.ai/) 并发抓取多个 URL
+    Jina Reader 是一个免费的云端服务，能将网页直接转换为 Markdown，速度极快。
     """
     contents = []
     
     # 定义单个抓取任务
-    async def crawl_one(crawler, url):
+    async def crawl_one(session, url):
+        # 构造 Jina Reader 的 URL
+        jina_url = f"https://r.jina.ai/{url}"
+        
         try:
-            # 策略优化：伪装成真实浏览器 User-Agent，降低被反爬拦截的概率
-            # 许多站点会拦截默认的 python-requests 或爬虫 UA
-            custom_headers = {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            
-            # arun 是 crawl4ai 的核心异步方法
-            # magic=True (如果支持) 可以尝试自动处理一些动态内容，这里保守起见只加 headers
-            # bypass_cache=True 确保获取最新内容
-            # 性能优化：增加 15 秒超时控制，防止单个慢站拖累整体
-            result = await asyncio.wait_for(
-                crawler.arun(url=url, headers=custom_headers, bypass_cache=True),
-                timeout=15.0
-            )
-            
-            if result.success:
-                # 我们只需要 markdown 格式，且为了防爆 Token，截取前 6000 字符
-                # 这里的逻辑是：通常重要信息都在文章开头，但 2000 可能太短了
-                return f"来源URL: {url}\n内容摘要:\n{result.markdown[:6000]}..." 
-            else:
-                print(f"抓取失败 (Status {result.status_code}): {url}")
-                return ""
+            # 性能优化：增加 10 秒超时控制
+            async with session.get(jina_url, timeout=10) as response:
+                if response.status == 200:
+                    text = await response.text()
+                    # 简单的去噪：如果返回内容太短，可能是反爬或错误页
+                    if len(text) < 100:
+                        return ""
+                    
+                    # 截取前 3000 字符，防止 Token 爆炸
+                    return f"来源URL: {url}\n内容摘要:\n{text[:3000]}..."
+                else:
+                    print(f"Jina Reader 抓取失败 (Status {response.status}): {url}")
+                    return ""
         except asyncio.TimeoutError:
-            print(f"抓取超时 (15s): {url}")
+            print(f"Jina Reader 抓取超时 (10s): {url}")
             return ""
         except Exception as e:
-            print(f"抓取 {url} 异常: {e}")
+            print(f"Jina Reader 抓取异常 {url}: {e}")
             return ""
 
-    # 启动 Crawl4AI 的上下文管理器
-    async with AsyncWebCrawler(verbose=True) as crawler:
-        # 创建所有任务
-        tasks = [crawl_one(crawler, url) for url in urls]
-        # asyncio.gather 让这些任务“同时”跑，而不是一个接一个跑
+    # 使用 aiohttp 进行并发请求
+    async with aiohttp.ClientSession() as session:
+        tasks = [crawl_one(session, url) for url in urls]
         results = await asyncio.gather(*tasks)
         
         # 过滤掉空的抓取结果
@@ -253,20 +273,19 @@ async def _summarize_content(query: str, raw_contents: List[str]) -> str:
     # 构造 Prompt
     system_prompt = """
     你是一个专业的互联网信息情报员。
-    你的任务是根据用户的问题，从给定的多篇网页抓取内容中，提取**尽可能详细**的信息。
+    你的任务是根据用户的问题，从给定的多篇网页抓取内容中，提取**核心信息**。
     
     特别注意：
     - **智能去噪**：用户搜索技术/岗位词（如 "AI Agent"）时，经常会出现无关领域的干扰结果（如“金融代理人”、“前端UI组件”）。请务必**识别并过滤**掉这些明显偏离核心语义的内容，只保留最相关、最硬核的信息。
     - 如果用户询问“岗位需求”或“招聘要求”，请务必提取具体的**硬性技能**（如Python, LangChain）、**软性技能**、**工作职责**、**经验要求**等细节。
-    - 不要只给出笼统的总结（如“需要编程能力”），而要给出具体的描述（如“精通Python，熟悉异步编程”）。
     
     要求：
-    1. **相关性第一**：如果搜索结果包含多个领域（例如“AI Agent”既有大模型智能体，又有金融中介），请优先保留**计算机/人工智能/大模型**领域的内容，除非用户明确问了其他领域。
+    1. **相关性第一**：如果搜索结果包含多个领域，请优先保留**计算机/人工智能/大模型**领域的内容。
     2. **去除噪音**：忽略广告、导航栏、无关的推荐列表。
-    3. **细节优先**：优先保留具体的名词、工具名、技术栈和数据。
-    4. **格式清晰**：使用 Markdown 列表整理关键点。
+    3. **核心优先**：优先保留具体的名词、工具名、技术栈和数据。
+    4. **格式清晰**：使用 Markdown 列表整理关键点，**保持简洁**，避免长篇大论。
     5. **不要瞎编**：只能基于提供的【搜索结果】回答。
-    6. **统一总结**：请将所有来源的信息**融合**在一起回答，不要按来源（如“来源1说...来源2说...”）分段，直接给出一份完整的综合报告。
+    6. **统一总结**：请将所有来源的信息**融合**在一起回答，不要按来源分段。
     """
     
     prompt_template = ChatPromptTemplate.from_messages([
@@ -286,3 +305,60 @@ async def _summarize_content(query: str, raw_contents: List[str]) -> str:
     except Exception as e:
         print(f"LLM 摘要生成失败: {e}")
         return "生成摘要时发生错误。"
+
+async def _perform_bocha_search(query: str) -> str:
+    """
+    私有函数：调用 Bocha Web Search API
+    """
+    print(f"--- [Researcher] 开始联网搜索 (Bocha): {query} ---")
+    
+    url = "https://api.bochaai.com/v1/web-search"
+    headers = {
+        "Authorization": f"Bearer {settings.BOCHA_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "query": query,
+        "freshness": "noLimit", # 不限制时间，获取更多结果
+        "summary": True,        # 请求长摘要
+        "count": 8              # 获取 8 条结果
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers, timeout=10) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    print(f"Bocha API Error: {response.status} - {error_text}")
+                    return f"搜索服务暂时不可用 (Status {response.status})"
+                
+                data = await response.json()
+                
+                # 解析 Bocha 返回的数据
+                # 兼容两种结构：直接返回 webPages 或 包裹在 data 字段中
+                if "data" in data and isinstance(data["data"], dict) and "webPages" in data["data"]:
+                    web_pages = data["data"]["webPages"].get("value", [])
+                else:
+                    web_pages = data.get("webPages", {}).get("value", [])
+
+                if not web_pages:
+                    return "未找到相关网络搜索结果。"
+                
+                # 提取内容
+                contents = []
+                for page in web_pages:
+                    title = page.get("name", "无标题")
+                    url = page.get("url", "")
+                    # Bocha 的 summary 通常质量很高，优先使用
+                    summary = page.get("summary") or page.get("snippet", "")
+                    
+                    if summary:
+                        contents.append(f"来源URL: {url}\n标题: {title}\n内容摘要:\n{summary}")
+                
+                # 最后还是走一遍 LLM 总结，保证输出格式统一
+                print(f"--- [Researcher] Bocha 返回 {len(contents)} 条结果，正在生成最终摘要... ---")
+                return await _summarize_content(query, contents)
+                
+    except Exception as e:
+        print(f"Bocha Search Exception: {e}")
+        return f"搜索过程中发生错误: {str(e)}"

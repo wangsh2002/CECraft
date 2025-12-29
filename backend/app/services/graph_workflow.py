@@ -214,13 +214,14 @@ async def chat_node(state: AgentState):
     user_input = state["user_input"]
     history = state.get("history", [])
     reference_info = state.get("reference_info", "")
+    context_json = state.get("context_json", "")
     
     # If we have reference info (from research_consult), append it to prompt
     prompt = user_input
     if reference_info:
         prompt = f"用户问题: {user_input}\n\n参考资料 (基于你的调研):\n{reference_info}\n\n请根据参考资料回答。"
         
-    res = await llm_service.process_chat_request(prompt, history)
+    res = await llm_service.process_chat_request(prompt, context=context_json, history=history)
     
     final_res = {
         "intention": "chat",

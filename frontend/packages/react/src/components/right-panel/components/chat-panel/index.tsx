@@ -140,34 +140,83 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
         setIsExpanded(true);
 
         const contextStr = extractContext();
+        
+        // Placeholder for AI response
+        const aiMsgId = (Date.now() + 1).toString();
+        setChatHistory(prev => [...prev, {
+            id: aiMsgId,
+            role: 'ai',
+            content: "正在思考...",
+            timestamp: Date.now()
+        }]);
 
         try {
-            const response = await api.post("/ai/agent", { 
-                prompt: userMsg.content, 
-                context: contextStr 
+            const token = localStorage.getItem("token");
+            const baseURL = api.defaults.baseURL || `${window.location.protocol}//${window.location.hostname}:8000/api`;
+            
+            const response = await fetch(`${baseURL}/ai/agent`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
+                body: JSON.stringify({ 
+                    prompt: userMsg.content, 
+                    context: contextStr 
+                })
             });
 
-            const result = response.data;
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
             
-            const aiMsg: ChatMessage = {
-                id: (Date.now() + 1).toString(),
-                role: 'ai',
-                content: result.reply,
-                previewData: (result.intention === "modify" && result.modified_data) ? result.modified_data : undefined,
-                timestamp: Date.now()
-            };
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            
+            if (!reader) throw new Error("No reader available");
 
-            setChatHistory(prev => [...prev, aiMsg]);
+            let buffer = "";
+            
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || ""; 
+                
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const event = JSON.parse(line);
+                        if (event.type === 'status') {
+                            setChatHistory(prev => prev.map(msg => 
+                                msg.id === aiMsgId ? { ...msg, content: `🔄 ${event.content}` } : msg
+                            ));
+                        } else if (event.type === 'result') {
+                            const result = event.data;
+                            setChatHistory(prev => prev.map(msg => 
+                                msg.id === aiMsgId ? { 
+                                    ...msg, 
+                                    content: result.reply,
+                                    previewData: (result.intention === "modify" && result.modified_data) ? result.modified_data : undefined
+                                } : msg
+                            ));
+                        } else if (event.type === 'error') {
+                             console.error("Stream error:", event.content);
+                        }
+                    } catch (e) {
+                        console.error("Parse error", e);
+                    }
+                }
+            }
 
         } catch (error) {
             console.error('AI Request failed:', error);
             Message.error('AI 请求失败');
-            setChatHistory(prev => [...prev, {
-                id: Date.now().toString(),
-                role: 'ai',
-                content: "服务暂时不可用，请稍后再试。",
-                timestamp: Date.now()
-            }]);
+            setChatHistory(prev => prev.map(msg => 
+                msg.id === aiMsgId ? { ...msg, content: "服务暂时不可用，请稍后再试。" } : msg
+            ));
         } finally {
             setIsLoading(false);
         }
@@ -227,7 +276,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
                                     <div className={styles.bubble}>
                                         {msg.role === 'ai' ? (
                                             <div className={styles.markdown}>
-                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                                {msg.content.startsWith('🔄') ? (
+                                                    <div className={styles.thinking}>
+                                                        <Spin size={12} />
+                                                        <span className={styles.thinkingText}>
+                                                            {msg.content.replace('🔄', '').trim()}
+                                                        </span>
+                                                    </div>
+                                                ) : (
+                                                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                                )}
                                             </div>
                                         ) : (
                                             <pre>{msg.content}</pre>
@@ -259,16 +317,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
                                     </div>
                                 </div>
                             ))
-                        )}
-                        {isLoading && (
-                             <div className={cs(styles.message, styles.ai)}>
-                                <div className={styles.avatar}>
-                                    <Avatar size={24} style={{ backgroundColor: '#165DFF' }}><IconRobot /></Avatar>
-                                </div>
-                                <div className={styles.bubble}>
-                                    <Spin dot />
-                                </div>
-                             </div>
                         )}
                     </div>
                     
