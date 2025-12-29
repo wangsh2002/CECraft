@@ -30,6 +30,27 @@ interface ChatPanelProps {
     activeState: any;
 }
 
+const DEFAULT_SUGGESTIONS = [
+    "如何写好一份简历？",
+    "简历有哪些常见误区？",
+    "帮我生成一份简历模板"
+];
+
+const CONTEXT_SUGGESTIONS = [
+    "帮我润色这段内容",
+    "这段描述专业吗？",
+    "扩充这段经历的细节",
+    "翻译成英文"
+];
+
+const COMMANDS = [
+    { label: '润色内容', value: '请帮我润色这段内容：', desc: '优化表达，使其更专业', trigger: ['润色', 'polish', '/'] },
+    { label: '翻译成英文', value: '请将这段内容翻译成英文：', desc: '中译英', trigger: ['翻译', 'translate', '/'] },
+    { label: '扩写经历', value: '请帮我扩写这段经历，重点突出：', desc: '补充细节，丰富内容', trigger: ['扩写', 'expand', '/'] },
+    { label: '语法检查', value: '请帮我检查这段内容的语法错误：', desc: '纠正错别字和语病', trigger: ['检查', 'check', '/'] },
+    { label: '精简内容', value: '请帮我精简这段内容：', desc: '保留核心，去除冗余', trigger: ['精简', 'shorten', '/'] },
+];
+
 export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => {
     const [isExpanded, setIsExpanded] = useState(true);
     const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -51,9 +72,37 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
     const { user } = useAuth();
     const [authVisible, setAuthVisible] = useState(false);
 
+    const [suggestions, setSuggestions] = useState<typeof COMMANDS>([]);
+    const inputRef = useRef<any>(null);
+
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const isTextSelected = activeState?.key === NAV_ENUM.TEXT;
+
+    useEffect(() => {
+        if (!inputValue) {
+            setSuggestions([]);
+            return;
+        }
+        
+        const lowerInput = inputValue.toLowerCase();
+        const matched = COMMANDS.filter(cmd => 
+            cmd.trigger.some(t => t.startsWith(lowerInput) || lowerInput.startsWith(t))
+        );
+        
+        // 如果输入的是 /，显示所有命令
+        if (inputValue === '/') {
+            setSuggestions(COMMANDS);
+        } else {
+            setSuggestions(matched);
+        }
+    }, [inputValue]);
+
+    const handleCommandSelect = (value: string) => {
+        setInputValue(value);
+        setSuggestions([]);
+        inputRef.current?.focus();
+    };
 
     // 移除自动收起的逻辑，允许用户手动控制
     // useEffect(() => {
@@ -118,8 +167,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
         }
     };
 
-    const handleSendMessage = async () => {
-        if (!inputValue.trim() || isLoading) return;
+    const handleSendMessage = async (content?: string) => {
+        const msgContent = typeof content === 'string' ? content : inputValue;
+        if (!msgContent.trim() || isLoading) return;
         if (!user) {
             setAuthVisible(true);
             return;
@@ -130,7 +180,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
         const userMsg: ChatMessage = {
             id: Date.now().toString(),
             role: 'user',
-            content: inputValue,
+            content: msgContent,
             timestamp: Date.now()
         };
 
@@ -280,7 +330,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
                     <div className={styles.chatList} ref={scrollRef}>
                         {chatHistory.length === 0 ? (
                             <div className={styles.emptyState}>
-                                💡 选中简历中的文本框，即可让 AI 帮你润色内容或进行诊断。
+                                <div className={styles.emptyIcon}>💡</div>
+                                <div className={styles.emptyText}>
+                                    {isTextSelected 
+                                        ? "选中了内容，您可以这样问：" 
+                                        : "欢迎使用简历助手，您可以试着问："}
+                                </div>
+                                <div className={styles.suggestions}>
+                                    {(isTextSelected ? CONTEXT_SUGGESTIONS : DEFAULT_SUGGESTIONS).map(text => (
+                                        <div 
+                                            key={text} 
+                                            className={styles.suggestionItem}
+                                            onClick={() => handleSendMessage(text)}
+                                        >
+                                            {text}
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         ) : (
                             chatHistory.map(msg => (
@@ -339,6 +405,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
                     </div>
                     
                     <div className={styles.inputArea}>
+                        {suggestions.length > 0 && (
+                            <div className={styles.commandList}>
+                                {suggestions.map(cmd => (
+                                    <div 
+                                        key={cmd.label} 
+                                        className={styles.commandItem}
+                                        onClick={() => handleCommandSelect(cmd.value)}
+                                    >
+                                        <div className={styles.commandLabel}>{cmd.label}</div>
+                                        <div className={styles.commandDesc}>{cmd.desc}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                         {isTextSelected && (
                             <div className={styles.options}>
                                 <Checkbox checked={useContext} onChange={setUseContext}>
@@ -350,10 +430,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ editor, activeState }) => 
                             </div>
                         )}
                         <Input.Search
-                            placeholder={isTextSelected && useContext ? "针对选中内容提问..." : "输入问题进行闲聊..."}
+                            ref={inputRef}
+                            placeholder={isTextSelected && useContext ? "输入 / 唤起指令，或直接提问..." : "输入问题进行闲聊..."}
                             value={inputValue}
                             onChange={setInputValue}
-                            onSearch={handleSendMessage}
+                            onSearch={() => handleSendMessage()}
                             searchButton={isLoading ? <Spin size={14} /> : <IconSend />}
                             disabled={isLoading || isReviewing}
                         />
