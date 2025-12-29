@@ -172,28 +172,77 @@ CECraft 采用前后端分离架构，前端基于 Canvas 引擎实现高性能�
 
 ```text
 CECraft/
-├── backend/                    # Python Backend (FastAPI + LangChain)
+## 6. 项目结构
+
+```text
+CECraft/
+├── backend/                            # Python 后端 (FastAPI + LangChain)
 │   ├── app/
-│   │   ├── api/              # RESTful API Endpoints (Auth, Resume, Agent)
-│   │   ├── core/             # Config & Security (JWT, Password Hashing)
-│   │   ├── db/               # Database Session & Base Models
-│   │   ├── models/           # SQLAlchemy ORM Models (User, Resume)
-│   │   ├── schemas/          # Pydantic Schemas (Request/Response Validation)
-│   │   ├── services/
-│   │   │   ├── graph_workflow.py # LangGraph State Machine & Workflow definition
-│   │   │   ├── agent_workflow.py # LLM Services & Prompt Templates
-│   │   │   └── tools/            # RAG & Web Search Tools implementation
-│   │   └── ...
-│   ├── crawl_docs.py           # Data crawler for Resumes/JDs
-│   ├── ingest_rag.py           # Vector embedding pipeline
-│   └── docker-compose.yml      # Infrastructure (Milvus, MinIO, Etcd, MySQL)
-├── frontend/                   # Frontend Monorepo
+│   │   ├── api/
+│   │   │   ├── v1/
+│   │   │   │   ├── agent.py            # 智能体对话接口 (POST /api/ai/agent)
+│   │   │   │   ├── auth.py             # 用户认证接口 (Login, Register)
+│   │   │   │   └── resumes.py          # 简历 CRUD 接口
+│   │   │   └── deps.py                 # 依赖注入 (DB Session, Current User)
+│   │   ├── core/
+│   │   │   ├── config.py               # 环境变量与全局配置加载
+│   │   │   └── security.py             # JWT 签发与密码哈希工具
+│   │   ├── db/
+│   │   │   ├── base.py                 # SQLAlchemy Base 定义
+│   │   │   └── session.py              # 数据库连接池配置
+│   │   ├── models/
+│   │   │   ├── resume.py               # 简历表 ORM 模型
+│   │   │   └── user.py                 # 用户表 ORM 模型
+│   │   ├── schemas/
+│   │   │   ├── agent.py                # Agent 请求/响应 Pydantic 模型
+│   │   │   ├── resume.py               # 简历数据验证模型
+│   │   │   ├── token.py                # JWT Token 模型
+│   │   │   └── user.py                 # 用户注册/登录模型
+│   │   └── services/
+│   │       ├── tools/
+│   │       │   ├── rag_retriever.py    # RAG 检索器 (Milvus + Rerank)
+│   │       │   └── web_search.py       # 联网搜索工具 (DuckDuckGo/Bocha + Jina)
+│   │       ├── agent_workflow.py       # LLM 服务封装与 Prompt 模板管理
+│   │       ├── format_converter.py     # Delta <-> Markdown 双向格式转换核心
+│   │       └── graph_workflow.py       # LangGraph 状态机与工作流编排
+│   ├── data/                           # 本地数据集与爬取的简历/JD 文件
+│   ├── evaluation/
+│   │   ├── agent_perf.py               # Agent 响应速度与性能测试
+│   │   ├── business_value.py           # 业务价值评估 (STAR 法则符合度)
+│   │   ├── rag_metrics.py              # RAG 指标计算 (Context Recall, Faithfulness)
+│   │   └── run_benchmark.py            # 自动化评测启动脚本
+│   ├── crawl_docs.py                   # 简历/JD 数据爬虫脚本
+│   ├── ingest_rag.py                   # 向量化入库脚本 (Markdown 切分 + Embedding)
+│   ├── main.py                         # FastAPI 应用入口
+│   └── docker-compose.yml              # 基础设施编排 (Milvus, MinIO, Etcd, MySQL)
+├── frontend/                           # 前端 Monorepo (基于 PNPM Workspaces)
 │   ├── packages/
-│   │   ├── core/               # Custom Canvas rendering engine
-│   │   ├── delta/              # Operational Transformation data structure
-│   │   └── react/              # React UI components
+│   │   ├── core/                       # 自研 Canvas 渲染引擎核心
+│   │   │   └── src/
+│   │   │       ├── canvas/             # 绘制层 (Graph, Mask, Grid)
+│   │   │       ├── editor/             # 编辑器主控类 (Editor Instance)
+│   │   │       ├── event/              # 事件总线与 DOM 事件代理
+│   │   │       ├── history/            # 撤销/重做 (Undo/Redo) 栈管理
+│   │   │       ├── selection/          # 选区交互与 Range 管理
+│   │   │       └── state/              # 编辑器状态管理 (Active, Hover)
+│   │   ├── delta/                      # 空间数据模型 (Spatial Data Model)
+│   │   │   └── src/
+│   │   │       ├── delta.ts            # 数据节点基类 (x, y, width, height)
+│   │   │       ├── delta-set.ts        # 扁平化数据集合管理
+│   │   │       └── op.ts               # 原子操作定义 (Insert, Update, Delete)
+│   │   ├── plugin/                     # 编辑器插件系统
+│   │   │   └── src/
+│   │   │       ├── image/              # 图片插件实现
+│   │   │       ├── rect/               # 矩形/形状插件实现
+│   │   │       └── text/               # 富文本插件实现
+│   │   └── react/                      # React UI 适配层
+│   │       └── src/
+│   │           ├── components/         # 通用 UI 组件 (Toolbar, ContextMenu)
+│   │           ├── hooks/              # 编辑器相关 Hooks (useEditor)
+│   │           └── modules/            # 业务模块 (RightPanel, AI Chat)
 │   └── ...
-└── run.sh                      # Startup script
+└── run.sh                              # 项目一键启动脚本
+```
 
 ```
 
