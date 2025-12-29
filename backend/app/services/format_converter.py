@@ -152,6 +152,10 @@ def delta_to_markdown(delta_set_input: str | Dict[str, Any]) -> str:
                 text = group['text']
                 config = group['config']
                 
+                # Normalize NBSP to normal space for Markdown compatibility
+                # This ensures LLM sees normal spaces and can preserve them
+                text = text.replace('\u00A0', ' ')
+                
                 # Apply styles
                 # Link wrapper
                 if config.get(TEXT_ATTRS["LINK"]):
@@ -391,56 +395,73 @@ def markdown_to_delta(markdown_text: str) -> str:
     lines = markdown_text.split('\n')
     
     for p in lines:
-        p = p.strip()
-        if not p: continue
+        # Skip empty lines (but allow lines with just spaces if they are relevant? 
+        # Usually empty lines in markdown are just spacing. 
+        # If we want to preserve vertical spacing, we should keep them.
+        # But the original code did `if not p: continue` after strip.
+        # Let's stick to ignoring purely empty/whitespace lines for now to avoid excessive vertical space,
+        # or we can allow them. Standard markdown ignores multiple newlines.
+        if not p.strip(): 
+            continue
+        
+        p_rstripped = p.rstrip()
+        p_stripped = p.strip()
         
         # Line Config
         line_config = {}
-        content = p
+        content = p_rstripped
         
         # Dividing Line
-        if p == '---' or p == '***':
+        if p_stripped == '---' or p_stripped == '***':
             line_config[TEXT_ATTRS["DIVIDING_LINE"]] = "true"
             content = ""
             height = 10
         else:
             # Headings
-            if p.startswith('# '):
+            if p_stripped.startswith('# '):
                 line_config[TEXT_ATTRS["SIZE"]] = 24
                 line_config[TEXT_ATTRS["WEIGHT"]] = "bold"
-                content = p[2:]
-            elif p.startswith('## '):
+                content = p_stripped[2:]
+            elif p_stripped.startswith('## '):
                 line_config[TEXT_ATTRS["SIZE"]] = 20
                 line_config[TEXT_ATTRS["WEIGHT"]] = "bold"
-                content = p[3:]
-            elif p.startswith('### '):
+                content = p_stripped[3:]
+            elif p_stripped.startswith('### '):
                 line_config[TEXT_ATTRS["SIZE"]] = 18
                 line_config[TEXT_ATTRS["WEIGHT"]] = "bold"
-                content = p[4:]
+                content = p_stripped[4:]
             
             # Lists
-            # Ordered: 1. text
-            m_ol = re.match(r'^(\s*)(\d+)\.\s+(.*)', p)
-            m_ul = re.match(r'^(\s*)-\s+(.*)', p)
-            
-            if m_ol:
-                indent = m_ol.group(1)
-                start = m_ol.group(2)
-                content = m_ol.group(3)
-                level = len(indent) // 3 + 1 # Assume 3 spaces per level
-                line_config[TEXT_ATTRS["ORDERED_LIST_LEVEL"]] = str(level)
-                line_config[TEXT_ATTRS["ORDERED_LIST_START"]] = start
-            elif m_ul:
-                indent = m_ul.group(1)
-                content = m_ul.group(2)
-                level = len(indent) // 3 + 1
-                line_config[TEXT_ATTRS["UNORDERED_LIST_LEVEL"]] = str(level)
+            # Use p_rstripped to preserve indentation for regex matching
+            else:
+                m_ol = re.match(r'^(\s*)(\d+)\.\s(.*)', p_rstripped)
+                m_ul = re.match(r'^(\s*)-\s(.*)', p_rstripped)
+                
+                if m_ol:
+                    indent = m_ol.group(1)
+                    start = m_ol.group(2)
+                    content = m_ol.group(3)
+                    level = len(indent) // 3 + 1 # Assume 3 spaces per level
+                    line_config[TEXT_ATTRS["ORDERED_LIST_LEVEL"]] = str(level)
+                    line_config[TEXT_ATTRS["ORDERED_LIST_START"]] = start
+                elif m_ul:
+                    indent = m_ul.group(1)
+                    content = m_ul.group(2)
+                    level = len(indent) // 3 + 1
+                    line_config[TEXT_ATTRS["UNORDERED_LIST_LEVEL"]] = str(level)
 
             # Calculate height
             lines_count = math.ceil(len(content) / CHARS_PER_LINE) if content else 1
             if lines_count < 1: lines_count = 1
             base_height = line_config.get(TEXT_ATTRS["SIZE"], FONT_SIZE) + 10
             height = lines_count * base_height
+
+        # Preserve consecutive spaces for frontend rendering
+        # Replace double spaces with " \u00A0" (Space + No-Break Space)
+        # This ensures that multiple spaces are not collapsed by HTML renderers
+        if content:
+            while "  " in content:
+                content = content.replace("  ", " \u00A0")
 
         # Parse Inline Styles
         chars_data = parse_inline_styles(content, line_config)
